@@ -123,10 +123,7 @@ function testEnvOnly(req, res, next) {
  *                 message:
  *                   type: string
  *       400:
- *         description: >-
- *           購物車為空（CART_EMPTY）、庫存不足（STOCK_INSUFFICIENT）、收件資訊或 couponCode 格式錯誤（VALIDATION_ERROR），
- *           或優惠碼不可用：COUPON_INVALID（不存在）、COUPON_EXPIRED（已失效）、COUPON_MIN_SUBTOTAL（未達使用門檻）。
- *           任何一種都不會建立訂單、扣庫存或清空購物車
+ *         description: 購物車為空（CART_EMPTY）、庫存不足（STOCK_INSUFFICIENT）、收件資訊或 couponCode 格式錯誤（VALIDATION_ERROR），或優惠碼不可用（COUPON_INVALID 不存在、COUPON_EXPIRED 已失效、COUPON_MIN_SUBTOTAL 未達使用門檻）。任何一種都不會建立訂單、扣庫存或清空購物車
  */
 router.post('/', (req, res) => {
   const {
