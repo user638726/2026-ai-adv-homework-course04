@@ -47,4 +47,37 @@ describe('Products API', () => {
     expect(res.body).toHaveProperty('error');
     expect(res.body.error).not.toBeNull();
   });
+
+  it('should fall back to the defaults for invalid pagination values', async () => {
+    for (const query of ['page=0&limit=0', 'page=-1&limit=-3', 'page=abc&limit=2abc', 'page=1.5&limit=1.5']) {
+      const res = await request(app).get(`/api/products?${query}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.pagination).toMatchObject({ page: 1, limit: 10 });
+    }
+  });
+
+  it('should cap the limit at 100', async () => {
+    const res = await request(app).get('/api/products?limit=1000');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.pagination.limit).toBe(100);
+  });
+
+  it('should not fail on an oversized page number', async () => {
+    const res = await request(app).get('/api/products?page=99999999999999999999');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.products).toEqual([]);
+    expect(res.body.data.pagination.total).toBeGreaterThan(0);
+  });
+
+  it('should not fail when pagination parameters are objects or arrays', async () => {
+    for (const query of ['page[toString]=1', 'limit[toString]=1', 'page=1&page=2', 'limit[]=5']) {
+      const res = await request(app).get(`/api/products?${query}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.pagination).toMatchObject({ page: 1, limit: 10 });
+    }
+  });
 });

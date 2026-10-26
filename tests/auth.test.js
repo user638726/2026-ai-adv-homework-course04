@@ -114,3 +114,69 @@ describe('Auth API', () => {
     vi.restoreAllMocks();
   });
 });
+
+describe('Auth input and role handling', () => {
+  const jwt = require('jsonwebtoken');
+
+  const signToken = (payload) => jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const getAdminOrders = (token) => request(app)
+    .get('/api/admin/orders')
+    .set('Authorization', `Bearer ${token}`);
+
+  it('ignores an admin role claim that the database does not back up', async () => {
+    const { user } = await registerUser();
+    const forged = signToken({ userId: user.id, email: user.email, role: 'admin' });
+
+    const res = await getAdminOrders(forged);
+
+    expect(res.status).toBe(403);
+    expect(res.body).toHaveProperty('error', 'FORBIDDEN');
+  });
+
+  it('applies the stored admin role even when the token claims a lower one', async () => {
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@hexschool.com', password: '12345678' });
+    const { id, email } = login.body.data.user;
+
+    const res = await getAdminOrders(signToken({ userId: id, email, role: 'user' }));
+
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects a token for a user that no longer exists', async () => {
+    const res = await request(app)
+      .get('/api/auth/profile')
+      .set('Authorization', `Bearer ${signToken({ userId: 'ghost-user', email: 'ghost@example.com', role: 'user' })}`);
+
+    expect(res.status).toBe(401);
+    expect(res.body).toHaveProperty('error', 'UNAUTHORIZED');
+  });
+
+  it.each([
+    ['no @', 'plainaddress'],
+    ['no domain', 'no-domain@'],
+    ['no local part', '@no-local.com'],
+    ['two @', 'two@@example.com'],
+    ['a space', 'space in@example.com'],
+    ['more than 254 characters', `${'a'.repeat(250)}@example.com`]
+  ])('rejects a registration email with %s', async (_label, email) => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ email, password: 'password123', name: '格式測試' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('error', 'VALIDATION_ERROR');
+  });
+
+  it('rejects a pathological email quickly instead of stalling the server', async () => {
+    const start = Date.now();
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ email: `a@${'.'.repeat(90000)} `, password: 'password123', name: '效能測試' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('error', 'VALIDATION_ERROR');
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
+});

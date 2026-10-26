@@ -515,7 +515,7 @@
             }
           },
           "404": {
-            "description": "訂單不存在"
+            "description": "訂單不存在，或不屬於目前的使用者"
           }
         }
       }
@@ -901,10 +901,13 @@
             }
           },
           "400": {
-            "description": "庫存不足"
+            "description": "quantity 不是正整數（VALIDATION_ERROR），或超過庫存（STOCK_INSUFFICIENT）"
+          },
+          "401": {
+            "description": "未提供有效的 Token 或 X-Session-Id"
           },
           "404": {
-            "description": "購物車項目不存在"
+            "description": "購物車項目不存在，或不屬於目前的使用者／session"
           }
         }
       },

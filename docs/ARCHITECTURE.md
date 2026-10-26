@@ -4,7 +4,7 @@
 
 ```
 ├── app.js                          # Express 應用設定：view engine、靜態檔案、middleware 串接、路由掛載、404/錯誤處理
-├── server.js                       # 伺服器啟動入口，監聽 PORT（預設 3001）
+├── server.js                       # 伺服器啟動入口：先以 envValidation 檢查環境變數（production 設定不安全則拒絕啟動），再載入 app 並監聽 PORT（預設 3001）
 ├── package.json                    # 專案設定與 npm scripts
 ├── vitest.config.js                # Unit/API Test 設定（記憶體 SQLite、檔案循序執行）
 ├── vitest.integration.config.js    # Integration Test 獨立設定
@@ -28,17 +28,19 @@
 ├── src/
 │   ├── database.js                 # 資料庫初始化：建表、WAL 模式、foreign keys、種子資料（admin + 8 個花卉商品）
 │   ├── middleware/
-│   │   ├── authMiddleware.js       # JWT 驗證：解析 Bearer token → jwt.verify → 查 DB 確認用戶存在 → 設定 req.user
+│   │   ├── authMiddleware.js       # JWT 驗證：解析 Bearer token → jwt.verify → 查 DB 取得用戶 → 設定 req.user（email、role 取自資料庫，不採信 token claim）
 │   │   ├── adminMiddleware.js      # 管理員權限檢查：req.user.role === 'admin'，否則 403
 │   │   ├── sessionMiddleware.js    # 提取 X-Session-Id header → 設定 req.sessionId（訪客購物車用）
+│   │   ├── securityHeaders.js      # 基本安全標頭：X-Content-Type-Options、X-Frame-Options、Referrer-Policy
 │   │   └── errorHandler.js         # 全域錯誤處理：依狀態碼對應錯誤碼與安全訊息，500 一律回「伺服器內部錯誤」
 │   ├── utils/
-│   │   ├── ecpay.js                # 綠界 ECPay 工具：CheckMacValue 簽章、URL 編碼、AIO 表單產生、QueryTradeInfo 查詢
-│   │   ├── shipping.js             # 配送費用純邏輯：基本運費、免運門檻、偏遠/急件附加費
-│   │   └── validators.js           # 共用輸入驗證：非空字串、選填字串、正整數
+│   │   ├── ecpay.js                # 綠界 ECPay 工具：CheckMacValue 簽章、URL 編碼、AIO 表單產生、QueryTradeInfo 查詢（10 秒逾時）
+│   │   ├── shipping.js             # 配送費用純邏輯：基本運費、免運門檻（含 1,500 元）、偏遠/急件附加費
+│   │   ├── validators.js           # 共用輸入驗證：非空字串、選填字串、Email、正整數、分頁參數
+│   │   └── envValidation.js        # 啟動前環境變數檢查（production 的 JWT_SECRET、管理員帳密、ECPay 設定）
 │   ├── services/
-│   │   ├── orderService.js         # 訂單查詢、序列化、訂單編號與建單 transaction（依賴資料庫）
-│   │   └── paymentService.js       # 綠界交易結果判斷 isTradePaid()、標記已付款 markOrderPaid()
+│   │   ├── orderService.js         # 訂單查詢、序列化、唯一訂單編號與建單 transaction（含庫存扣除守衛，依賴資料庫）
+│   │   └── paymentService.js       # 綠界交易結果判斷 isTradePaid()（簽章必要）、標記已付款 markOrderPaid()
 │   └── routes/
 │       ├── authRoutes.js           # 認證路由：註冊、登入、個人資料
 │       ├── productRoutes.js        # 公開商品路由：列表（分頁）、詳情
@@ -109,26 +111,37 @@
     │   ├── coupon.test.js           # Issue A：結帳優惠碼
     │   ├── cancel-order.test.js     # Issue B：取消未付款訂單並回補庫存
     │   └── order-filter.test.js     # Issue C：我的訂單篩選與分頁
-    ├── shipping.test.js            # Shipping 模組單元測試（13 項）
-    ├── auth.test.js                # 認證 API 測試
-    ├── products.test.js            # 商品 API 測試
-    ├── cart.test.js                # 購物車 API 測試
-    ├── orders.test.js              # 訂單 API 測試
+    ├── shipping.test.js            # Shipping 模組單元測試（21 項，含 1,499 / 1,500 / 1,501 邊界）
+    ├── validators.test.js          # Email、正整數、分頁參數驗證（含 ReDoS 輸入）
+    ├── envValidation.test.js       # 啟動前環境變數檢查
+    ├── orderService.test.js        # 唯一訂單編號產生
+    ├── noDisabledTests.test.js     # 守衛：tests/ 內不得有 skip / only / todo 的測試
+    ├── auth.test.js                # 認證 API 測試（含 token 角色以資料庫為準、Email 驗證）
+    ├── products.test.js            # 商品 API 測試（含分頁參數容錯）
+    ├── cart.test.js                # 購物車 API 測試（含數量驗證、跨使用者、庫存上限）
+    ├── orders.test.js              # 訂單 API 測試（含輸入驗證、運費邊界、金額由後端計算）
+    ├── orderAccess.test.js         # 訂單存取控制：他人訂單 404、後台詳情 401 / 403 / 404
+    ├── pages.test.js               # 頁面路由：付款結果白名單、渲染失敗不洩漏路徑
+    ├── securityHeaders.test.js     # 安全標頭
     ├── adminProducts.test.js       # 後台商品 API 測試
-    └── adminOrders.test.js         # 後台訂單 API 測試
+    └── adminOrders.test.js         # 後台訂單 API 測試（含狀態篩選、分頁、排序）
 ```
 
 ## 啟動流程
 
 ```
 server.js
+  ├─ require('dotenv').config()                # 載入 .env
+  ├─ validateEnvironment(process.env)          # 僅直接執行 server.js 時；錯誤 → 結束（exit 1），警告 → console.warn
+  │                                            # 必須在載入 app 之前：載入 app 會開啟資料庫並建立管理員
   └─ require('./app')
        ├─ require('dotenv').config()           # 載入 .env
        ├─ require('./src/database')            # 初始化 DB（建表 + 種子資料）
        │    ├─ 建立 users, products, cart_items, orders, order_items 五張表
        │    ├─ seedAdminUser()                 # 若 admin 不存在則建立
        │    └─ seedProducts()                  # 若 products 為空則插入 8 筆花卉商品
-       ├─ 設定 view engine (EJS)
+       ├─ 關閉 X-Powered-By，設定 view engine (EJS)
+       ├─ securityHeaders                      # 先於靜態檔案，讓資源也帶安全標頭
        ├─ 掛載靜態檔案 (public/)
        ├─ 掛載全域 middleware
        │    ├─ cors({ origin: FRONTEND_URL })
@@ -287,8 +300,8 @@ server.js
 - **驗證流程**：
   1. 檢查 `Authorization` header 是否存在且以 `Bearer ` 開頭
   2. 提取 token，呼叫 `jwt.verify()` 驗證簽章與過期時間
-  3. 查詢資料庫確認 `userId` 對應的使用者仍然存在
-  4. 設定 `req.user = { userId, email, role }`
+  3. 查詢資料庫取得 `userId` 對應的使用者（不存在 → 401）
+  4. 設定 `req.user = { userId, email, role }`，其中 `email`、`role` **取自資料庫**，不採信 token 內的 claim：角色異動後舊 token 不會保留原權限，也無法靠 token 自稱 admin（簽章仍須有效）
 - **失敗回應**：401，訊息依情境為「請先登入」/「Token 無效或已過期」/「使用者不存在，請重新登入」
 
 ### 管理員授權（adminMiddleware）
@@ -306,6 +319,7 @@ server.js
   1. 若有 `Authorization: Bearer <token>` header → 走 JWT 驗證（無效則立即 401）
   2. 若無 Bearer token，檢查 `req.sessionId`（由 sessionMiddleware 從 `X-Session-Id` header 提取）
   3. 若兩者皆無 → 401「請提供有效的登入 Token 或 X-Session-Id」
+- **JWT 路徑**：與 authMiddleware 相同，`email`、`role` 取自資料庫
 - **注意**：Session ID 無任何伺服器端驗證或持久化，純粹作為訪客識別用
 - **訪客購物車合併**：`POST /api/auth/login` 與 `POST /api/auth/register` 成功時，若請求帶 `X-Session-Id`，將該訪客購物車併入會員購物車（同商品數量相加、以庫存為上限），再刪除訪客品項。前端 `apiFetch` 每次請求都會帶 `X-Session-Id`，因此「訪客加入購物車 → 登入 → 結帳」可以直接接續
 
@@ -363,7 +377,7 @@ server.js
 | 欄位 | 型別 | 約束 | 說明 |
 |------|------|------|------|
 | id | TEXT | PRIMARY KEY | UUID v4 |
-| order_no | TEXT | UNIQUE NOT NULL | 訂單編號，格式：`ORD-YYYYMMDD-XXXXX`（日期採台北時間，5 碼 UUID 前綴大寫） |
+| order_no | TEXT | UNIQUE NOT NULL | 訂單編號，格式：`ORD-YYYYMMDD-XXXXX`（日期採台北時間，5 碼 UUID 前綴大寫；與既有編號重複時重新產生） |
 | user_id | TEXT | NOT NULL, FK → users.id | 下單使用者 ID |
 | recipient_name | TEXT | NOT NULL | 收件人姓名 |
 | recipient_email | TEXT | NOT NULL | 收件人 Email |
@@ -389,6 +403,21 @@ server.js
 | product_price | INTEGER | NOT NULL | 下單時的商品價格快照 |
 | quantity | INTEGER | NOT NULL | 購買數量 |
 
+### 索引
+
+`initializeDatabase()` 以 `CREATE INDEX IF NOT EXISTS` 建立（可重複執行，舊資料庫啟動時自動補上）：
+
+| 索引 | 欄位 | 用途 |
+|------|------|------|
+| `idx_orders_user_created` | `orders(user_id, created_at)` | 我的訂單列表 |
+| `idx_orders_status_created` | `orders(status, created_at)` | 後台依狀態篩選 |
+| `idx_cart_items_user` | `cart_items(user_id)` | 會員購物車 |
+| `idx_cart_items_session` | `cart_items(session_id)` | 訪客購物車 |
+| `idx_order_items_order` | `order_items(order_id)` | 訂單品項 |
+| `idx_order_items_product` | `order_items(product_id)` | 刪除商品前檢查 pending 訂單 |
+
+`cart_items` 目前沒有 `(user_id, product_id)` 的 UNIQUE 約束（既有資料可能已有重複列，建立唯一索引會讓啟動失敗），因此建單時的庫存扣除以 `stock >= ?` 條件為準，同商品多列也不會超賣。
+
 ## 資料流：訂單建立流程
 
 這是系統中最複雜的操作，使用 `db.transaction()` 確保原子性：
@@ -399,16 +428,18 @@ server.js
 ├─ 1. 驗證收件人資訊與配送條件
 ├─ 2. 取得用戶購物車所有品項（JOIN products 取得即時價格與庫存）
 ├─ 3. 檢查購物車是否為空 → 400 CART_EMPTY
-├─ 4. 檢查每個品項庫存是否充足 → 400 STOCK_INSUFFICIENT（列出所有不足商品名稱）
-├─ 5. 計算 subtotal = Σ(price × quantity)
-├─ 6. Shipping 模組計算 shippingFee 與 totalAmount = subtotal + shippingFee
-├─ 7. 生成 orderNo: ORD-YYYYMMDD-{5碼UUID}
+├─ 4. 檢查每個品項數量為正整數 → 400 VALIDATION_ERROR（舊資料可能殘留小數數量）
+├─ 5. 檢查每個品項庫存是否充足 → 400 STOCK_INSUFFICIENT（列出所有不足商品名稱）
+├─ 6. 計算 subtotal = Σ(price × quantity)
+├─ 7. Shipping 模組計算 shippingFee 與 totalAmount = subtotal + shippingFee
 │
-└─ 8. 🔒 Transaction 開始
+└─ 8. 🔒 Transaction 開始（BEGIN IMMEDIATE，先取得寫入鎖）
+     ├─ 生成唯一 orderNo: ORD-YYYYMMDD-{5碼UUID}（與既有編號重複就重新產生）
      ├─ INSERT orders 記錄
      ├─ 對每個購物車品項：
      │   ├─ INSERT order_items（快照 product_name, product_price）
-     │   └─ UPDATE products SET stock = stock - quantity
+     │   └─ UPDATE products SET stock = stock - quantity WHERE id = ? AND stock >= quantity
+     │       └─ 影響列數 0（庫存已被他人買走）→ InsufficientStockError → 整筆回滾 → 400 STOCK_INSUFFICIENT
      └─ DELETE cart_items WHERE user_id = ?
      🔒 Transaction 結束
 │
@@ -417,7 +448,7 @@ server.js
 
 ## Shipping 模組
 
-`src/utils/shipping.js` 不依賴 Express 或資料庫，專責根據 `subtotal`、配送方式、偏遠地區與當日急件條件，計算基本運費、附加費、最終運費與訂單總額。滿 1,500 元僅免基本運費，附加費仍依條件累加。建立訂單路由不接受前端自行計算的金額。
+`src/utils/shipping.js` 不依賴 Express 或資料庫，專責根據 `subtotal`、配送方式、偏遠地區與當日急件條件，計算基本運費、附加費、最終運費與訂單總額。小計滿 1,500 元（含剛好 1,500 元）僅免基本運費，附加費仍依條件累加；`subtotal` 必須為非負整數。建立訂單路由不接受前端自行計算的金額。
 
 ## 綠界金流付款流程
 
@@ -438,9 +469,9 @@ server.js
   │
   └─ 付款驗證
        └─ POST /api/orders/:id/check-payment
-            ├─ 呼叫綠界 QueryTradeInfo API（TimeStamp 每次重新產生）
+            ├─ 呼叫綠界 QueryTradeInfo API（TimeStamp 每次重新產生，逾時 10 秒）
             ├─ TradeStatus === '1'
-            │    ├─ 驗證 CheckMacValue，並核對 MerchantTradeNo 與 TradeAmt
+            │    ├─ 回應必須帶有效的 CheckMacValue（缺少也視為驗證失敗），並核對 MerchantTradeNo 與 TradeAmt
             │    ├─ 通過 → 更新訂單狀態為 paid（僅限仍為 pending 的訂單）
             │    └─ 不符 → 500 ECPAY_QUERY_ERROR，訂單維持 pending
             └─ 其他 → 回傳「尚未完成付款」
@@ -451,7 +482,7 @@ server.js
 ### 已知限制
 
 - **MerchantTradeNo 不可重複**：每筆訂單的 `merchant_trade_no` 固定，綠界不接受重複的交易編號。使用者若進入綠界頁面後未付款，再次「前往付款」可能被拒，需重新下單。
-- **付款表單頁不需登入**：`GET /ecpay/payment/:orderId` 以不可猜測的訂單 UUID 存取，只會產生導向綠界的表單，不回傳收件人資料。
+- **付款表單頁不需登入**：`GET /ecpay/payment/:orderId` 以訂單 UUID 存取，只會產生導向綠界的表單，不回傳收件人資料；但沒有擁有者檢查，持有訂單 UUID 的人都能取得含金額的表單，而 UUID 會出現在網址中。後續需改為需登入（見 `docs/ai-review.md` F-15）。訂單沒有 `merchant_trade_no` 時回 400。
 
 ### ECPay 設定
 
@@ -463,6 +494,8 @@ server.js
 | `ECPAY_HASH_KEY` | 雜湊金鑰 | pwFHCqoQZGmho4w6 |
 | `ECPAY_HASH_IV` | 雜湊向量 | EkRm7iFT261dpevs |
 | `ECPAY_ENV` | 環境（staging / production） | staging |
+
+開發環境未設定時使用上表的 staging 公開測試值。`NODE_ENV=production` 時，`server.js` 啟動前會檢查：`ECPAY_ENV` 必須明確設為 `production` 或 `staging`；設為 `production` 時三個憑證都必須自行設定，且不得沿用上表的測試值，否則拒絕啟動（`ECPAY_ENV=staging` 只會顯示警告）。
 
 ### 付款模擬端點（僅測試環境）
 

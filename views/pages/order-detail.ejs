@@ -8,11 +8,11 @@
   <template v-else-if="order">
     <!-- Payment Result Alert -->
     <div
-      v-if="paymentResult && paymentMessages[paymentResult]"
+      v-if="visiblePaymentResult"
       class="rounded-xl p-4 mb-6 text-sm"
-      :class="paymentMessages[paymentResult].cls"
+      :class="paymentMessages[visiblePaymentResult].cls"
     >
-      {{ paymentMessages[paymentResult].text }}
+      {{ paymentMessages[visiblePaymentResult].text }}
     </div>
 
     <!-- Order Info -->

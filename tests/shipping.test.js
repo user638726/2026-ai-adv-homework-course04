@@ -19,15 +19,34 @@ describe('Shipping module', () => {
   });
 
   describe('滿額免基本運費', () => {
-    it('商品小計 1,499 元時仍收基本運費', () => {
-      const result = calculateShipping({ subtotal: 1499, method: HOME_DELIVERY });
+    it.each([
+      ['宅配', HOME_DELIVERY, 120],
+      ['超商取貨', CONVENIENCE_STORE, 60]
+    ])('商品小計 1,499 元時，%s仍收基本運費 %i 元', (_label, method, expectedFee) => {
+      const result = calculateShipping({ subtotal: 1499, method });
 
       expect(result.qualifiesForFreeShipping).toBe(false);
-      expect(result.shippingFee).toBe(120);
+      expect(result.baseFee).toBe(expectedFee);
+      expect(result.shippingFee).toBe(expectedFee);
     });
 
-    it.skip('商品小計 1,500 元時免基本運費', () => {
-      const result = calculateShipping({ subtotal: 1500, method: HOME_DELIVERY });
+    it.each([
+      ['宅配', HOME_DELIVERY],
+      ['超商取貨', CONVENIENCE_STORE]
+    ])('商品小計剛好 1,500 元時，%s免基本運費', (_label, method) => {
+      const result = calculateShipping({ subtotal: 1500, method });
+
+      expect(result.qualifiesForFreeShipping).toBe(true);
+      expect(result.baseFee).toBe(0);
+      expect(result.shippingFee).toBe(0);
+      expect(result.totalAmount).toBe(1500);
+    });
+
+    it.each([
+      ['宅配', HOME_DELIVERY],
+      ['超商取貨', CONVENIENCE_STORE]
+    ])('商品小計 1,501 元時，%s免基本運費', (_label, method) => {
+      const result = calculateShipping({ subtotal: 1501, method });
 
       expect(result.qualifiesForFreeShipping).toBe(true);
       expect(result.shippingFee).toBe(0);
@@ -79,11 +98,27 @@ describe('Shipping module', () => {
       expect(result.shippingFee).toBe(450);
       expect(result.totalAmount).toBe(2450);
     });
+
+    it('小計剛好 1,500 元免基本運費時，仍收所有附加費', () => {
+      const result = calculateShipping({
+        subtotal: 1500,
+        method: HOME_DELIVERY,
+        isRemoteArea: true,
+        isExpress: true
+      });
+
+      expect(result.baseFee).toBe(0);
+      expect(result.shippingFee).toBe(450);
+      expect(result.totalAmount).toBe(1950);
+    });
   });
 
   describe('輸入驗證', () => {
     it.each([
       ['負數小計', { subtotal: -1, method: HOME_DELIVERY }],
+      ['非整數小計', { subtotal: 1000.5, method: HOME_DELIVERY }],
+      ['NaN 小計', { subtotal: NaN, method: HOME_DELIVERY }],
+      ['Infinity 小計', { subtotal: Infinity, method: HOME_DELIVERY }],
       ['不支援的配送方式', { subtotal: 1000, method: 'drone' }],
       ['非 boolean 的條件旗標', { subtotal: 1000, method: HOME_DELIVERY, isRemoteArea: 1 }]
     ])('拒絕%s', (_label, input) => {

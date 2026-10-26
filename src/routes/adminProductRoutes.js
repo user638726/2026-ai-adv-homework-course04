@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../database');
 const authMiddleware = require('../middleware/authMiddleware');
 const adminMiddleware = require('../middleware/adminMiddleware');
-const { isNonEmptyString, isOptionalString } = require('../utils/validators');
+const { isNonEmptyString, isOptionalString, parsePagination } = require('../utils/validators');
 
 const router = express.Router();
 
@@ -84,9 +84,7 @@ router.use(authMiddleware, adminMiddleware);
  *         description: 權限不足
  */
 router.get('/', (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 10));
-  const offset = (page - 1) * limit;
+  const { page, limit, offset } = parsePagination(req.query);
 
   const total = db.prepare('SELECT COUNT(*) as count FROM products').get().count;
   const products = db.prepare('SELECT * FROM products ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);

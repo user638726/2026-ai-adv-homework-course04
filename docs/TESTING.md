@@ -13,10 +13,10 @@
 ## 執行指令
 
 ```bash
-# 單元與 API 測試（7 個檔案、55 項測試）
+# 單元與 API 測試（14 個檔案、242 項測試）
 npm run test:unit
 
-# 結帳、訂單、DB、庫存、回滾與綠界整合測試（10 項測試）
+# 結帳、訂單、DB、庫存、回滾與綠界整合測試（16 項測試）
 npm run test:integration
 
 # 已另行啟動 http://localhost:3001 後，執行真實付款 E2E
@@ -120,8 +120,8 @@ Integration Test 中有兩層防護：
 用於 `npm run test:unit`：
 
 - 載入記憶體 SQLite 測試環境。
-- 排除 `tests/integration/**` 與 `tests/e2e/**`，避免 Vitest 載入 Playwright test API。
-- 循序執行原有單元/API 測試。
+- 排除 `tests/integration/**`、`tests/e2e/**` 與 `tests/acceptance/**`，避免 Vitest 載入 Playwright test API，也不執行預期失敗的驗收測試。
+- 循序執行所有單元/API 測試。
 
 ### `vitest.integration.config.js`
 
@@ -131,17 +131,28 @@ Integration Test 中有兩層防護：
 - 載入記憶體 SQLite setup 與原 DB 雜湊守衛。
 - 停用檔案平行執行，避免 fixture 相互影響。
 
-## 原有測試檔案
+## Unit / API 測試檔案
 
 | 檔案 | 範圍 |
 |------|------|
-| `tests/shipping.test.js` | Shipping 純函式、門檻與附加費 |
-| `tests/auth.test.js` | 註冊、登入、重複 Email、個人資料、非字串欄位、JSON 格式錯誤 |
-| `tests/products.test.js` | 商品列表、分頁、詳情與 404 |
-| `tests/cart.test.js` | 訪客/會員購物車 CRUD、數量驗證、登入/註冊時合併訪客購物車（含庫存上限） |
-| `tests/orders.test.js` | 建單、配送費、查詢與認證、模擬付款僅限測試環境 |
-| `tests/adminProducts.test.js` | 後台商品 CRUD 與權限、刪除仍在購物車中的商品、名稱驗證 |
-| `tests/adminOrders.test.js` | 後台訂單列表、詳情與篩選 |
+| `tests/shipping.test.js` | Shipping 純函式：基本運費、免運門檻（1,499 / 1,500 / 1,501，宅配與超商）、附加費、非整數／NaN／負數小計 |
+| `tests/validators.test.js` | `isValidEmail`（含 ReDoS 輸入）、`parsePositiveInteger`（安全整數上限）、`parsePagination` |
+| `tests/envValidation.test.js` | 啟動前環境變數檢查：開發環境警告、production 的 JWT_SECRET／管理員帳密／ECPay 設定 |
+| `tests/orderService.test.js` | 訂單編號格式與唯一編號產生（碰撞重試、次數上限） |
+| `tests/noDisabledTests.test.js` | 守衛：`tests/` 內不得有 skip、only、todo 的測試 |
+| `tests/auth.test.js` | 註冊、登入、重複 Email、個人資料、非字串欄位、JSON 格式錯誤、Email 格式與長度、token 的 role 以資料庫為準 |
+| `tests/products.test.js` | 商品列表、分頁、詳情與 404、無效／超大／物件型分頁參數 |
+| `tests/cart.test.js` | 訪客/會員購物車 CRUD、PATCH 數量驗證（0、負數、小數、字串、null、陣列等）、庫存上限、他人項目 404、無效 token 不降級、登入/註冊時合併訪客購物車（含庫存上限） |
+| `tests/orders.test.js` | 建單、配送費（含 1,499 / 1,500 / 1,501 的完整 API 流程）、金額由後端計算、輸入驗證、舊資料小數數量被拒、查詢與認證、模擬付款僅限測試環境 |
+| `tests/orderAccess.test.js` | 他人訂單的讀取／模擬付款／查詢綠界皆回 404 且不外洩資料、後台訂單詳情 401 / 403 / 404 |
+| `tests/pages.test.js` | 頁面渲染、付款結果白名單、物件型 query 不造成 500、渲染失敗不洩漏伺服器路徑 |
+| `tests/securityHeaders.test.js` | 基本安全標頭，且不洩露 X-Powered-By |
+| `tests/adminProducts.test.js` | 後台商品 CRUD 與權限、刪除仍在購物車中的商品、名稱驗證、分頁參數容錯 |
+| `tests/adminOrders.test.js` | 後台訂單列表、詳情、狀態篩選（pending / paid / failed / 未知值）、新到舊排序與分頁、分頁參數容錯 |
+
+### 測試不得被停用
+
+`tests/noDisabledTests.test.js` 會掃描 `tests/` 下所有腳本檔，只要出現 skip、only、todo 或對應的 `x` / `f` 前綴寫法（例如 `xit`、`fit`）就會失敗，並列出檔案與行號。曾有一個免運邊界測試被停用，讓定價錯誤在全綠的結果下長期存在；這個守衛隨 `test:unit` 一起在 CI 執行。
 
 `tests/setup.js` 提供 `app`、`request`、`getAdminToken()` 與 `registerUser()` 等共用輔助。其中 `app` 來自 `tests/setup/testServer.js`，是已在 `127.0.0.1` 啟動的測試伺服器；新增 API 測試時請沿用，不要直接 `require('../app')`，否則在 macOS 上可能連到同埠的其他程式而隨機失敗。
 
@@ -161,7 +172,11 @@ Integration Test 中有兩層防護：
 | transaction 回滾 | 臨時 SQLite trigger 使第二筆品項寫入失敗，驗證訂單/品項/庫存/購物車全數回滾 |
 | ECPay AIO 表單 | staging action、MerchantTradeNo、TotalAmount、ItemName、URL 與 CheckMacValue |
 | QueryTradeInfo | mock 已付（附有效 CheckMacValue）、未付、HTTP 錯誤；驗證 API 與 DB 狀態 |
-| QueryTradeInfo 驗證 | 簽章遭竄改、金額不符的「已付」回應皆回 500，訂單維持 pending |
+| QueryTradeInfo 驗證 | 簽章遭竄改、缺少簽章、金額不符、交易編號不符的「已付」回應皆回 500，訂單維持 pending |
+| QueryTradeInfo 逾時 | 呼叫綠界的 `fetch` 帶有 `AbortSignal`（10 秒逾時） |
+| 付款狀態 | 已付款的訂單不再查詢綠界；沒有交易編號時 check-payment 回 400 `NO_TRADE_NO`、付款頁回 400；標記已付款時的資料庫錯誤回 500 `INTERNAL_ERROR`，不被當成 `ECPAY_QUERY_ERROR` |
+| 庫存守衛 | 購物車同商品多列、合計超過庫存 → 400 `STOCK_INSUFFICIENT` 且整筆回滾；庫存檢查過時（直接呼叫 `createOrderFromCart`）→ `InsufficientStockError`、庫存不會被扣到負數 |
+| 服務層不變量 | `createOrderFromCart` 拒絕非整數數量 |
 
 ### 成功建單資料
 

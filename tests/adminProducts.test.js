@@ -128,4 +128,15 @@ describe('Admin Products API', () => {
     expect(res.body).toHaveProperty('error');
     expect(res.body.error).not.toBeNull();
   });
+
+  it('should not fail on invalid pagination parameters', async () => {
+    for (const query of ['page=99999999999999999999', 'page[toString]=1', 'limit=0', 'limit=2abc']) {
+      const res = await request(app)
+        .get(`/api/admin/products?${query}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toHaveProperty('pagination');
+    }
+  });
 });

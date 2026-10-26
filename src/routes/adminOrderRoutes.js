@@ -3,6 +3,7 @@ const db = require('../database');
 const authMiddleware = require('../middleware/authMiddleware');
 const adminMiddleware = require('../middleware/adminMiddleware');
 const { serializeOrder, findOrderById, getOrderItems } = require('../services/orderService');
+const { parsePagination } = require('../utils/validators');
 
 const router = express.Router();
 
@@ -88,9 +89,7 @@ router.use(authMiddleware, adminMiddleware);
  *                   type: string
  */
 router.get('/', (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 10));
-  const offset = (page - 1) * limit;
+  const { page, limit, offset } = parsePagination(req.query);
   const status = req.query.status;
 
   let countSql = 'SELECT COUNT(*) as count FROM orders';
@@ -103,7 +102,8 @@ router.get('/', (req, res) => {
     params.push(status);
   }
 
-  querySql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+  // created_at only has second precision, so rowid keeps the order (and the pages) stable
+  querySql += ' ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?';
 
   const total = db.prepare(countSql).get(...params).count;
   const orders = db.prepare(querySql).all(...params, limit, offset);

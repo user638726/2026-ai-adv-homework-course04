@@ -12,7 +12,12 @@ function isTradePaid(order, tradeInfo, config = ECPAY_CONFIG) {
     return false;
   }
 
-  if (tradeInfo.CheckMacValue && !verifyCheckMacValue(tradeInfo, config.hashKey, config.hashIV)) {
+  // A paid answer must be signed: without a CheckMacValue nothing else in it can be trusted
+  if (!tradeInfo.CheckMacValue) {
+    throw new Error('QueryTradeInfo CheckMacValue missing');
+  }
+
+  if (!verifyCheckMacValue(tradeInfo, config.hashKey, config.hashIV)) {
     throw new Error('QueryTradeInfo CheckMacValue mismatch');
   }
 

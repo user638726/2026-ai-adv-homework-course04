@@ -64,10 +64,12 @@ npm run postman
 
 管理員帳號在伺服器首次啟動時自動建立（可透過 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 環境變數自訂）。
 
+> **僅限本機開發**：這組預設帳密是公開的。`NODE_ENV=production` 時，`server.js` 會要求明確設定 `ADMIN_EMAIL` 與強度足夠的 `ADMIN_PASSWORD`（至少 12 字元、不得為預設值），否則拒絕啟動；種子帳號只在首次建立，事後修改環境變數不會更新既有密碼。詳見 [DEVELOPMENT.md](./DEVELOPMENT.md#啟動前環境檢查)。
+
 ## 配送費用
 
 - 宅配基本運費 120 元；超商取貨 60 元。
-- 商品小計滿 1,500 元免基本運費。
+- 商品小計滿 1,500 元（含剛好 1,500 元）免基本運費。
 - 偏遠地區加收 200 元；當日急件加收 250 元。
 - 滿額免運不免除附加費。建立訂單時由伺服器端 `src/utils/shipping.js` 統一重算。
 
@@ -80,8 +82,8 @@ npm run postman
 | `npm run dev:css` | Tailwind CSS watch 模式 |
 | `npm run css:build` | 編譯並壓縮 CSS |
 | `npm run test` | 同 `npm run test:unit` |
-| `npm run test:unit` | 執行單元與 API 測試（55 項） |
-| `npm run test:integration` | 執行結帳、DB、庫存、回滾與綠界整合測試（10 項） |
+| `npm run test:unit` | 執行單元與 API 測試（242 項） |
+| `npm run test:integration` | 執行結帳、DB、庫存、回滾與綠界整合測試（16 項） |
 | `npm run test:e2e` | 對已啟動的 3001 服務執行綠界網路 ATM 實測（1 項） |
 | `npm run test:acceptance` | 第四場 3 個 Issue 的驗收測試；可加檔名篩選，如 `npm run test:acceptance -- coupon` |
 | `npm run openapi` | 生成 openapi.json |

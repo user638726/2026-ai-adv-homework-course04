@@ -80,17 +80,18 @@ function initializeDatabase() {
     );
   `);
 
-  // Migration: add merchant_trade_no column for ECPay integration
-  try {
-    db.exec(`ALTER TABLE orders ADD COLUMN merchant_trade_no TEXT`);
-  } catch (e) {
-    // Column already exists, ignore
-  }
-
-  // Migration: add shipping snapshot columns without changing legacy order totals.
   const orderColumns = new Set(
     db.prepare('PRAGMA table_info(orders)').all().map(column => column.name)
   );
+
+  // Migration: add merchant_trade_no column for ECPay integration.
+  // Check first instead of swallowing errors, so a real failure is not mistaken for "already there".
+  if (!orderColumns.has('merchant_trade_no')) {
+    db.exec('ALTER TABLE orders ADD COLUMN merchant_trade_no TEXT');
+    orderColumns.add('merchant_trade_no');
+  }
+
+  // Migration: add shipping snapshot columns without changing legacy order totals.
   const shippingColumns = [
     ['subtotal', 'INTEGER NOT NULL DEFAULT 0'],
     ['shipping_fee', 'INTEGER NOT NULL DEFAULT 0'],
@@ -106,6 +107,16 @@ function initializeDatabase() {
   }
 
   db.prepare('UPDATE orders SET subtotal = total_amount WHERE subtotal = 0').run();
+
+  // Indexes for the lookups the cart and order routes run on every request
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_orders_status_created ON orders(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_cart_items_user ON cart_items(user_id);
+    CREATE INDEX IF NOT EXISTS idx_cart_items_session ON cart_items(session_id);
+    CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+    CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
+  `);
 
   // Seed data
   seedAdminUser();

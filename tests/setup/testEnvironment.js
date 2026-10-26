@@ -1,6 +1,9 @@
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_PATH = ':memory:';
 process.env.JWT_SECRET = 'integration-test-secret';
+// Pin the seeded admin account so a developer's own .env cannot break the login helpers
+process.env.ADMIN_EMAIL = 'admin@hexschool.com';
+process.env.ADMIN_PASSWORD = '12345678';
 process.env.BASE_URL = 'http://localhost:3001';
 process.env.FRONTEND_URL = 'http://localhost:3001';
 process.env.ECPAY_MERCHANT_ID = '3002607';

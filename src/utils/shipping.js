@@ -23,8 +23,8 @@ const SURCHARGE_RULES = Object.freeze([
 ]);
 
 function assertValidInput({ subtotal, method, isRemoteArea, isExpress }) {
-  if (!Number.isFinite(subtotal) || subtotal < 0) {
-    throw new TypeError('subtotal 必須為非負有限數');
+  if (!Number.isInteger(subtotal) || subtotal < 0) {
+    throw new TypeError('subtotal 必須為非負整數');
   }
 
   if (!Object.prototype.hasOwnProperty.call(BASE_FEES, method)) {
@@ -36,8 +36,9 @@ function assertValidInput({ subtotal, method, isRemoteArea, isExpress }) {
   }
 }
 
+// "滿 1,500 元" includes a subtotal of exactly 1,500
 function qualifiesForFreeShipping(subtotal) {
-  return subtotal > SHIPPING_RATES.FREE_SHIPPING_THRESHOLD;
+  return subtotal >= SHIPPING_RATES.FREE_SHIPPING_THRESHOLD;
 }
 
 function calculateSurcharges(options) {

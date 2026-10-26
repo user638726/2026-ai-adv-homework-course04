@@ -4,14 +4,43 @@
 
 ## [Unreleased]
 
+### Security
+- `PATCH /api/cart/:itemId` 改用 `parsePositiveInteger()` 驗證數量：小數（如 `0.00390625`）、`0`、負數、`null`、空字串、陣列、`true`、`"0x1F"` 等一律回 400 `VALIDATION_ERROR`。修正前可用極小的小數數量以約 NT$65 成立標價 NT$1,280 的訂單，數量 `0` 或負數則回 500。建單時另檢查購物車內的數量（舊資料可能殘留小數），服務層同樣拒絕非整數數量
+- `GET /api/orders/:id` 改為只回傳本人的訂單，他人訂單回 404（與規格一致）；修正前任何登入會員都能讀到別人的收件資料
+- Email 驗證改用不會回溯的規則並限制 254 字元，註冊與建單共用 `isValidEmail()`；修正前 100KB 的註冊請求可讓伺服器停擺約 10 秒
+- `authMiddleware` 與購物車的 `dualAuth` 以資料庫中的 `email`、`role` 為準，不採信 token 內的 claim
+- `isTradePaid()` 在「已付款」回應缺少 `CheckMacValue` 時視為驗證失敗（原本直接略過簽章驗證）
+- `server.js` 啟動前檢查環境變數：`NODE_ENV=production` 時拒絕範例或過短的 `JWT_SECRET`、未設定或預設的管理員帳密、未明確設定的 `ECPAY_ENV`、以及沿用 staging 測試金鑰的正式環境設定；開發環境只顯示警告。檢查發生在載入 `app.js`（會建立種子管理員）之前
+- 新增 `securityHeaders` middleware（`X-Content-Type-Options`、`X-Frame-Options: SAMEORIGIN`、`Referrer-Policy`），並關閉 `X-Powered-By`
+- 頁面路由的渲染失敗改交給 `errorHandler`，不再把 EJS 錯誤訊息（含伺服器絕對路徑與模板原始碼）回給瀏覽器；`/orders/:id` 的 `?payment=` 只接受 `success`、`failed`、`cancel`、`pending`
+
+### Fixed
+- 免運門檻改為「滿 1,500 元（含）」：`qualifiesForFreeShipping` 由 `>` 改為 `>=`，小計剛好 1,500 元不再被多收運費，與文件、購物車與結帳頁的顯示一致
+- 取消 `tests/shipping.test.js` 中被停用的 1,500 元邊界測試，並補上 1,499 / 1,500 / 1,501（宅配與超商）與附加費組合；`shipping.js` 的 `subtotal` 必須為非負整數
+- 建單的庫存扣除改為 `UPDATE … WHERE stock >= ?` 並檢查影響列數，transaction 以 `BEGIN IMMEDIATE` 開始；庫存在檢查後被買走、或購物車內同商品有多列時，回 400 `STOCK_INSUFFICIENT` 並整筆回滾，不再是 500
+- 訂單編號與既有編號重複時重新產生（最多 10 次），不再讓結帳失敗
+- `check-payment`：綠界 QueryTradeInfo 加上 10 秒逾時；標記已付款時的資料庫錯誤改回 500 `INTERNAL_ERROR`，不再被當成 `ECPAY_QUERY_ERROR`；非同步錯誤交給 `errorHandler`，不再成為 unhandled rejection
+- `GET /ecpay/payment/:orderId` 對沒有 `merchant_trade_no` 的訂單回 400
+- 列表參數改用 `parsePagination()`：`page=99999999999999999999`、`page[x]=1` 等不再造成 500；`limit=0`、負數、`2abc` 一律使用預設值；訂單列表在 `created_at` 相同時以 `rowid` 排序，分頁順序穩定
+- 訂單詳情頁的「付款成功／失敗／處理中」橫幅必須與訂單實際狀態一致，不再單憑網址的 `?payment=` 顯示；後台訂單列表的「買家」欄改稱「收件人」（內容本來就是收件人姓名）
+- `merchant_trade_no` 欄位的 migration 改為先檢查欄位是否存在，不再用空的 `catch` 吞掉所有錯誤
+- 修正 macOS 上 Vitest 測試隨機失敗（401、200 或逾時）：supertest 自開的臨時伺服器綁在 `::`、卻連到 `127.0.0.1`，可能連到同埠的其他程式。新增 `tests/setup/testServer.js` 先在 `127.0.0.1` 開好伺服器，Unit、Integration 與驗收測試皆改用它
+
+### Added
+- `src/utils/envValidation.js`、`src/middleware/securityHeaders.js`
+- 資料庫索引：`orders(user_id, created_at)`、`orders(status, created_at)`、`cart_items(user_id)`、`cart_items(session_id)`、`order_items(order_id)`、`order_items(product_id)`（`CREATE INDEX IF NOT EXISTS`，舊資料庫啟動時自動補上）
+- 測試：Unit/API 由 55 項增為 242 項（含新檔案 `validators`、`envValidation`、`orderService`、`orderAccess`、`pages`、`securityHeaders`、`noDisabledTests`），Integration 由 10 項增為 16 項。涵蓋跨使用者存取、購物車數量驗證、金額由後端計算、輸入驗證、庫存回滾、簽章驗證等
+- `tests/noDisabledTests.test.js`：`tests/` 內出現 skip、only、todo 的測試時失敗，避免再有測試被默默停用
+- `docs/ai-review.md`：訂單、付款、運費、購物車的 AI 審查報告與各項修正狀態
+
 ### Changed
+- 測試環境固定 `ADMIN_EMAIL` / `ADMIN_PASSWORD`，不再受開發者 `.env` 影響
+- 既有測試的過弱斷言改為驗證實際值（錯誤碼、購物車總額與數量、運費 510 元）；後台訂單狀態篩選測試改為包含 pending、paid、failed 與未知值的明確案例
+- `docs/TESTING.md`：修正 `vitest.config.js` 的排除範圍說明（同時排除 `tests/acceptance/**`），補上新測試檔案
 - 抽出 `src/services/orderService.js`（訂單查詢、序列化與建單 transaction）與 `src/services/paymentService.js`（QueryTradeInfo 結果判斷與付款狀態更新）
 - 新增 `src/utils/validators.js` 統一路由輸入驗證；Shipping 模組改以規則表描述，單元測試改為 table-driven
 - `postman_collection.json` 不進版控（列入 `.gitignore`），需要時以 `npm run postman` 產生；路由變更後只需以 `npm run openapi` 同步 `openapi.json`。`docs/TESTING.md` 補上產生與匯入步驟
 - `scripts/generate-postman.js` 產生結果固定，同一份 OpenAPI 重跑不再出現亂數差異
-
-### Fixed
-- 修正 macOS 上 Vitest 測試隨機失敗（401、200 或逾時）：supertest 自開的臨時伺服器綁在 `::`、卻連到 `127.0.0.1`，可能連到同埠的其他程式。新增 `tests/setup/testServer.js` 先在 `127.0.0.1` 開好伺服器，Unit、Integration 與驗收測試皆改用它
 
 ## [1.2.0] - 2026-10-06
 

@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../database');
+const { parsePagination } = require('../utils/validators');
 
 const router = express.Router();
 
@@ -70,9 +71,7 @@ const router = express.Router();
  *                   type: string
  */
 router.get('/', (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 10));
-  const offset = (page - 1) * limit;
+  const { page, limit, offset } = parsePagination(req.query);
 
   const total = db.prepare('SELECT COUNT(*) as count FROM products').get().count;
   const products = db.prepare('SELECT * FROM products ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);

@@ -50,7 +50,9 @@ module.exports = db;
 
 - 金額一律以整數元儲存與計算。
 - 後端必須根據受信任資料重算費用，不接受前端自行傳入的總額。
-- 邊界門檻與可累加條件應各有單元測試。
+- 邊界門檻與可累加條件應各有單元測試（例如免運門檻要測 1,499 / 1,500 / 1,501）。
+- 測試不得被停用：`tests/` 內不可出現 skip、only、todo 的測試（`tests/noDisabledTests.test.js` 會檢查，失敗訊息會列出檔案與行號）。需要暫時排除時，應刪除或修正測試並在 PR 說明，不要留一個永遠被略過的案例。
+- 路由讀取列表參數一律使用 `parsePagination()`，不要直接 `parseInt(req.query.x)`：query 值可能是陣列或物件。
 
 ## 新增 API 端點步驟
 
@@ -156,18 +158,27 @@ CREATE TABLE IF NOT EXISTS your_table (
 
 | 變數 | 用途 | 必要性 | 預設值 |
 |------|------|--------|--------|
-| `JWT_SECRET` | JWT 簽章密鑰 | **必要**（缺少會崩潰） | 無 |
+| `JWT_SECRET` | JWT 簽章密鑰 | **必要**（缺少會拒絕啟動；production 須至少 32 字元，且不得為 `.env.example` 的範例值） | 無 |
 | `DATABASE_PATH` | SQLite 路徑；測試可設 `:memory:` | 選填 | `<project>/database.sqlite` |
 | `PORT` | 伺服器監聽埠號 | 選填 | `3001` |
 | `BASE_URL` | 伺服器基礎 URL | 選填 | `http://localhost:3001` |
 | `FRONTEND_URL` | CORS 允許來源 | 選填 | `http://localhost:3001`（app.js fallback） |
-| `ADMIN_EMAIL` | 種子管理員信箱 | 選填 | `admin@hexschool.com` |
-| `ADMIN_PASSWORD` | 種子管理員密碼 | 選填 | `12345678` |
-| `NODE_ENV` | 執行環境 | 選填 | 無（`test` 時 bcrypt salt rounds 為 1、開放模擬付款端點；其他 → 10 rounds、模擬付款回 404） |
-| `ECPAY_MERCHANT_ID` | 綠界商店代號 | 選填 | `3002607` |
-| `ECPAY_HASH_KEY` | 綠界 CheckMacValue HashKey | 選填 | staging 官方測試值 |
-| `ECPAY_HASH_IV` | 綠界 CheckMacValue HashIV | 選填 | staging 官方測試值 |
-| `ECPAY_ENV` | 綠界環境（`staging` / `production`） | 選填 | `staging` |
+| `ADMIN_EMAIL` | 種子管理員信箱 | 選填（`NODE_ENV=production` 必填） | `admin@hexschool.com` |
+| `ADMIN_PASSWORD` | 種子管理員密碼 | 選填（`NODE_ENV=production` 必填，至少 12 字元且不得為預設值） | `12345678`（僅限本機開發，公開文件已載明，勿用於正式環境） |
+| `NODE_ENV` | 執行環境 | 選填 | 無（`test` 時 bcrypt salt rounds 為 1、開放模擬付款端點；其他 → 10 rounds、模擬付款回 404；`production` 時啟動前會嚴格檢查上列與下列變數） |
+| `ECPAY_MERCHANT_ID` | 綠界商店代號 | 選填（`ECPAY_ENV=production` 必填，不得沿用測試值） | `3002607` |
+| `ECPAY_HASH_KEY` | 綠界 CheckMacValue HashKey | 選填（同上） | staging 官方測試值 |
+| `ECPAY_HASH_IV` | 綠界 CheckMacValue HashIV | 選填（同上） | staging 官方測試值 |
+| `ECPAY_ENV` | 綠界環境（`staging` / `production`） | 選填（`NODE_ENV=production` 必須明確設定） | `staging` |
+
+### 啟動前環境檢查
+
+直接執行 `server.js`（`npm run start` / `npm run dev:server`）時，會在載入 `app.js`（開啟資料庫並建立種子管理員）之前呼叫 `src/utils/envValidation.js` 的 `validateEnvironment()`：
+
+- **錯誤**（印出 `Fatal: …` 並以 exit code 1 結束）：缺少 `JWT_SECRET`；`NODE_ENV=production` 且 `JWT_SECRET` 過短或為範例值、`ADMIN_EMAIL` / `ADMIN_PASSWORD` 未設定或為預設／過短、`ECPAY_ENV` 未明確設定、`ECPAY_ENV=production` 卻缺少或沿用 staging 測試憑證。
+- **警告**（印出 `Warning: …`，照常啟動）：開發環境仍使用預設管理員密碼或範例 `JWT_SECRET`；production 使用 `ECPAY_ENV=staging`。
+
+自動測試不經過這段檢查（`tests/setup/testEnvironment.js` 直接固定測試用的環境變數）。
 | `E2E_BASE_URL` | Playwright 對已啟動服務之網址 | 選填 | `http://localhost:3001` |
 | `E2E_ADMIN_EMAIL` | E2E 登入帳號 | 選填 | `admin@hexschool.com` |
 | `E2E_ADMIN_PASSWORD` | E2E 登入密碼 | 選填 | `12345678` |
@@ -179,6 +190,7 @@ CREATE TABLE IF NOT EXISTS your_table (
 - 所有 Vitest 設定必須先載入 `tests/setup/testEnvironment.js`，再 import `app.js` 或 `src/database.js`。
 - API 測試一律從 `tests/setup.js`（或 `tests/setup/testServer.js`）取得 `app` 交給 supertest，不要直接 `require('../app')`：supertest 自開的臨時伺服器在 macOS 上可能連到同埠的其他程式，造成測試隨機失敗。
 - 自動測試必須使用 `DATABASE_PATH=:memory:` 或測試專屬臨時 SQLite，不得寫入專案 `database.sqlite`。
+- `tests/setup/testEnvironment.js` 也固定 `ADMIN_EMAIL` / `ADMIN_PASSWORD`，登入輔助函式不會因開發者自己的 `.env` 而失敗。
 - Integration Test 每項皆應自行建立 fixture，並依 foreign key 順序清理資料。
 - 外部服務（如 QueryTradeInfo）必須 mock，不得將真實網路成功視為測試通過條件。
 - 重要交易流程應同時斷言 API response 與 SQLite 最終狀態。

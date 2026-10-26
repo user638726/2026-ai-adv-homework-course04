@@ -1,10 +1,17 @@
 const request = require('supertest');
+const { v4: uuidv4 } = require('uuid');
 const app = require('../setup/testServer');
 const {
   ECPAY_CONFIG,
   generateCheckMacValue,
   verifyCheckMacValue
 } = require('../../src/utils/ecpay');
+const {
+  createOrderFromCart,
+  getCheckoutItems,
+  InsufficientStockError
+} = require('../../src/services/orderService');
+const { calculateShipping } = require('../../src/utils/shipping');
 const {
   db,
   resetDatabase,
@@ -367,6 +374,9 @@ describe('Order checkout integration flow', () => {
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe(ECPAY_CONFIG.queryTradeInfoUrl);
     expect(options.method).toBe('POST');
+    // A slow ECPay response must not hold the request open indefinitely
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(options.signal.aborted).toBe(false);
     const requestParams = Object.fromEntries(new URLSearchParams(options.body));
     expect(requestParams).toMatchObject({
       MerchantID: ECPAY_CONFIG.merchantId,
@@ -426,11 +436,20 @@ describe('Order checkout integration flow', () => {
     const forgedResponses = [
       // Tampered signature
       `MerchantID=${ECPAY_CONFIG.merchantId}&MerchantTradeNo=${merchantTradeNo}&TradeAmt=${order.total_amount}&TradeStatus=1&CheckMacValue=${'0'.repeat(64)}`,
+      // No signature at all
+      `MerchantID=${ECPAY_CONFIG.merchantId}&MerchantTradeNo=${merchantTradeNo}&TradeAmt=${order.total_amount}&TradeStatus=1`,
       // Valid signature but a different amount
       signedTradeInfo({
         MerchantID: ECPAY_CONFIG.merchantId,
         MerchantTradeNo: merchantTradeNo,
         TradeAmt: '1',
+        TradeStatus: '1'
+      }),
+      // Valid signature but for a different trade number
+      signedTradeInfo({
+        MerchantID: ECPAY_CONFIG.merchantId,
+        MerchantTradeNo: 'ORD00000000AAAAA',
+        TradeAmt: String(order.total_amount),
         TradeStatus: '1'
       })
     ];
@@ -451,5 +470,156 @@ describe('Order checkout integration flow', () => {
       expect(response.body.error).toBe('ECPAY_QUERY_ERROR');
       expect(db.prepare('SELECT status FROM orders WHERE id = ?').get(order.id).status).toBe('pending');
     }
+  });
+
+  it('does not query ECPay again for an order that is already paid', async () => {
+    const { token, order } = await createPendingOrder(primaryProduct, 'already-paid@example.com');
+    db.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await request(app)
+      .post(`/api/orders/${order.id}/check-payment`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expectEnvelope(response, 200);
+    expect(response.body.message).toBe('此訂單已付款');
+    expect(response.body.data.status).toBe('paid');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports NO_TRADE_NO and builds no payment form for an order without a trade number', async () => {
+    const { token, order } = await createPendingOrder(primaryProduct, 'no-trade-no@example.com');
+    db.prepare('UPDATE orders SET merchant_trade_no = NULL WHERE id = ?').run(order.id);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const check = await request(app)
+      .post(`/api/orders/${order.id}/check-payment`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expectEnvelope(check, 400);
+    expect(check.body.error).toBe('NO_TRADE_NO');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const page = await request(app).get(`/ecpay/payment/${order.id}`);
+    expect(page.status).toBe(400);
+    expect(page.text).not.toContain('<form');
+  });
+
+  it('does not report a database failure as an ECPay query error', async () => {
+    const { token, order } = await createPendingOrder(primaryProduct, 'db-failure@example.com');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => signedTradeInfo({
+        MerchantID: ECPAY_CONFIG.merchantId,
+        MerchantTradeNo: order.order_no.replace(/-/g, ''),
+        TradeAmt: String(order.total_amount),
+        TradeStatus: '1'
+      })
+    }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    db.exec(`
+      CREATE TRIGGER integration_fail_order_update
+      BEFORE UPDATE ON orders
+      BEGIN
+        SELECT RAISE(ABORT, 'forced integration failure');
+      END;
+    `);
+
+    const response = await request(app)
+      .post(`/api/orders/${order.id}/check-payment`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expectEnvelope(response, 500);
+    expect(response.body).toEqual({
+      data: null,
+      error: 'INTERNAL_ERROR',
+      message: '伺服器內部錯誤'
+    });
+    expect(db.prepare('SELECT status FROM orders WHERE id = ?').get(order.id).status).toBe('pending');
+  });
+
+  it('answers STOCK_INSUFFICIENT and rolls back when duplicate cart rows exceed the stock together', async () => {
+    const member = await registerMember('duplicate-rows@example.com');
+    db.prepare('UPDATE products SET stock = 4 WHERE id = ?').run(primaryProduct.id);
+    await addProductToCart(member.token, primaryProduct.id, 3);
+    // cart_items has no UNIQUE constraint, so existing data can hold two rows for one product
+    db.prepare('INSERT INTO cart_items (id, user_id, product_id, quantity) VALUES (?, ?, ?, ?)')
+      .run(uuidv4(), member.user.id, primaryProduct.id, 3);
+
+    const response = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${member.token}`)
+      .send(ORDER_PAYLOAD);
+
+    expectEnvelope(response, 400);
+    expect(response.body.data).toBeNull();
+    expect(response.body.error).toBe('STOCK_INSUFFICIENT');
+    expect(db.prepare('SELECT COUNT(*) AS count FROM orders').get().count).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM order_items').get().count).toBe(0);
+    expect(db.prepare('SELECT stock FROM products WHERE id = ?').get(primaryProduct.id).stock).toBe(4);
+    expect(db.prepare(
+      'SELECT COUNT(*) AS count FROM cart_items WHERE user_id = ?'
+    ).get(member.user.id).count).toBe(2);
+  });
+
+  it('refuses to deduct stock below zero when the stock check was stale', async () => {
+    const member = await registerMember('stale-stock@example.com');
+    await addProductToCart(member.token, primaryProduct.id, 3);
+    const cartItems = getCheckoutItems(member.user.id);
+    const subtotal = 3 * primaryProduct.price;
+
+    // Another buyer takes the stock after the caller's own check, before the transaction starts
+    db.prepare('UPDATE products SET stock = 1 WHERE id = ?').run(primaryProduct.id);
+
+    expect(() => createOrderFromCart({
+      userId: member.user.id,
+      recipient: {
+        name: ORDER_PAYLOAD.recipientName,
+        email: ORDER_PAYLOAD.recipientEmail,
+        address: ORDER_PAYLOAD.recipientAddress
+      },
+      delivery: { method: 'home_delivery', isRemoteArea: false, isExpress: false },
+      cartItems,
+      subtotal,
+      shipping: calculateShipping({ subtotal, method: 'home_delivery' })
+    })).toThrow(InsufficientStockError);
+
+    expect(db.prepare('SELECT COUNT(*) AS count FROM orders').get().count).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM order_items').get().count).toBe(0);
+    expect(db.prepare('SELECT stock FROM products WHERE id = ?').get(primaryProduct.id).stock).toBe(1);
+    expect(db.prepare(
+      'SELECT COUNT(*) AS count FROM cart_items WHERE user_id = ?'
+    ).get(member.user.id).count).toBe(1);
+  });
+
+  it('rejects non-integer quantities at the service layer', async () => {
+    const member = await registerMember('service-fraction@example.com');
+    const subtotal = 1050;
+
+    expect(() => createOrderFromCart({
+      userId: member.user.id,
+      recipient: {
+        name: ORDER_PAYLOAD.recipientName,
+        email: ORDER_PAYLOAD.recipientEmail,
+        address: ORDER_PAYLOAD.recipientAddress
+      },
+      delivery: { method: 'home_delivery', isRemoteArea: false, isExpress: false },
+      cartItems: [{
+        id: uuidv4(),
+        product_id: primaryProduct.id,
+        quantity: 1.5,
+        product_name: primaryProduct.name,
+        product_price: primaryProduct.price,
+        product_stock: primaryProduct.stock
+      }],
+      subtotal,
+      shipping: { subtotal, shippingFee: 0, totalAmount: subtotal }
+    })).toThrow(TypeError);
+
+    expect(db.prepare('SELECT COUNT(*) AS count FROM orders').get().count).toBe(0);
+    expect(db.prepare('SELECT stock FROM products WHERE id = ?').get(primaryProduct.id).stock).toBe(10);
   });
 });

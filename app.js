@@ -4,16 +4,21 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const sessionMiddleware = require('./src/middleware/sessionMiddleware');
+const securityHeaders = require('./src/middleware/securityHeaders');
 const errorHandler = require('./src/middleware/errorHandler');
 
 // Initialize database (creates tables + seed data)
 require('./src/database');
 
 const app = express();
+app.disable('x-powered-by');
 
 // View engine
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
+
+// Response headers (before static files so assets get them too)
+app.use(securityHeaders);
 
 // Static files
 app.use(express.static(path.join(__dirname, 'public')));
@@ -38,7 +43,7 @@ app.use('/api/orders', require('./src/routes/orderRoutes'));
 app.use('/', require('./src/routes/pageRoutes'));
 
 // 404 handler
-app.use(function (req, res) {
+app.use(function (req, res, next) {
   if (req.path.startsWith('/api')) {
     return res.status(404).json({
       data: null,
@@ -47,7 +52,7 @@ app.use(function (req, res) {
     });
   }
   res.status(404).render('pages/404', {}, function (err, body) {
-    if (err) return res.status(500).send(err.message);
+    if (err) return next(err);
     res.render('layouts/front', { body, title: '找不到頁面', pageScript: '' });
   });
 });

@@ -12,10 +12,11 @@ const {
   getOrderItemSummaries,
   getCheckoutItems,
   findInsufficientItems,
-  createOrderFromCart
+  createOrderFromCart,
+  InsufficientStockError
 } = require('../services/orderService');
 const { isTradePaid, markOrderPaid } = require('../services/paymentService');
-const { isNonEmptyString } = require('../utils/validators');
+const { isNonEmptyString, isValidEmail } = require('../utils/validators');
 
 const router = express.Router();
 
@@ -129,8 +130,7 @@ router.post('/', (req, res) => {
     });
   }
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(recipientEmail)) {
+  if (!isValidEmail(recipientEmail)) {
     return res.status(400).json({
       data: null,
       error: 'VALIDATION_ERROR',
@@ -164,6 +164,15 @@ router.post('/', (req, res) => {
     });
   }
 
+  // Older versions accepted fractional quantities through the cart PATCH endpoint
+  if (cartItems.some(item => !Number.isSafeInteger(item.quantity) || item.quantity <= 0)) {
+    return res.status(400).json({
+      data: null,
+      error: 'VALIDATION_ERROR',
+      message: '購物車內有無效的商品數量，請重新調整數量後再結帳'
+    });
+  }
+
   const insufficientItems = findInsufficientItems(cartItems);
   if (insufficientItems.length > 0) {
     const names = insufficientItems.map(i => i.product_name).join(', ');
@@ -185,14 +194,27 @@ router.post('/', (req, res) => {
     isExpress
   });
 
-  const orderId = createOrderFromCart({
-    userId,
-    recipient: { name: recipientName, email: recipientEmail, address: recipientAddress },
-    delivery: { method: shippingMethod, isRemoteArea, isExpress },
-    cartItems,
-    subtotal,
-    shipping
-  });
+  let orderId;
+  try {
+    orderId = createOrderFromCart({
+      userId,
+      recipient: { name: recipientName, email: recipientEmail, address: recipientAddress },
+      delivery: { method: shippingMethod, isRemoteArea, isExpress },
+      cartItems,
+      subtotal,
+      shipping
+    });
+  } catch (err) {
+    // The stock changed after the check above; the transaction has already rolled back
+    if (err instanceof InsufficientStockError) {
+      return res.status(400).json({
+        data: null,
+        error: 'STOCK_INSUFFICIENT',
+        message: err.message
+      });
+    }
+    throw err;
+  }
 
   const order = findOrderById(orderId);
   const orderItems = getOrderItemSummaries(orderId);
@@ -345,10 +367,10 @@ router.get('/', (req, res) => {
  *                 message:
  *                   type: string
  *       404:
- *         description: 訂單不存在
+ *         description: 訂單不存在，或不屬於目前的使用者
  */
 router.get('/:id', (req, res) => {
-  const order = findOrderById(req.params.id);
+  const order = findOrderForUser(req.params.id, req.user.userId);
 
   if (!order) {
     return res.status(404).json({ data: null, error: 'NOT_FOUND', message: '訂單不存在' });
@@ -493,31 +515,43 @@ router.patch('/:id/pay', testEnvOnly, (req, res) => {
  *       500:
  *         description: 綠界查詢失敗，或回應的 CheckMacValue、交易編號、金額驗證不符（ECPAY_QUERY_ERROR）
  */
-router.post('/:id/check-payment', async (req, res) => {
-  const userId = req.user.userId;
-
-  const order = findOrderForUser(req.params.id, userId);
-  if (!order) {
-    return res.status(404).json({ data: null, error: 'NOT_FOUND', message: '訂單不存在' });
-  }
-
-  if (order.status !== 'pending') {
-    const items = getOrderItemSummaries(order.id);
-    return res.json({
-      data: { ...serializeOrder(order), items },
-      error: null,
-      message: order.status === 'paid' ? '此訂單已付款' : '此訂單付款失敗'
-    });
-  }
-
-  if (!order.merchant_trade_no) {
-    return res.status(400).json({ data: null, error: 'NO_TRADE_NO', message: '此訂單無綠界交易編號' });
-  }
-
+router.post('/:id/check-payment', async (req, res, next) => {
+  // Express 4 does not catch rejections of async handlers, so forward every unexpected error
   try {
-    const result = await queryTradeInfo(order.merchant_trade_no);
+    const order = findOrderForUser(req.params.id, req.user.userId);
+    if (!order) {
+      return res.status(404).json({ data: null, error: 'NOT_FOUND', message: '訂單不存在' });
+    }
 
-    if (isTradePaid(order, result)) {
+    if (order.status !== 'pending') {
+      const items = getOrderItemSummaries(order.id);
+      return res.json({
+        data: { ...serializeOrder(order), items },
+        error: null,
+        message: order.status === 'paid' ? '此訂單已付款' : '此訂單付款失敗'
+      });
+    }
+
+    if (!order.merchant_trade_no) {
+      return res.status(400).json({ data: null, error: 'NO_TRADE_NO', message: '此訂單無綠界交易編號' });
+    }
+
+    let tradeInfo;
+    let paid;
+    try {
+      tradeInfo = await queryTradeInfo(order.merchant_trade_no);
+      paid = isTradePaid(order, tradeInfo);
+    } catch (err) {
+      // Only the ECPay request and the verification of its answer are reported as ECPAY_QUERY_ERROR
+      console.error('[ECPay] QueryTradeInfo error:', err.message);
+      return res.status(500).json({
+        data: null,
+        error: 'ECPAY_QUERY_ERROR',
+        message: '查詢綠界付款狀態失敗，請稍後再試'
+      });
+    }
+
+    if (paid) {
       markOrderPaid(order.id);
       const updated = findOrderById(order.id);
       const items = getOrderItemSummaries(order.id);
@@ -530,17 +564,12 @@ router.post('/:id/check-payment', async (req, res) => {
 
     const items = getOrderItemSummaries(order.id);
     return res.json({
-      data: { ...serializeOrder(order), items, ecpay_trade_status: result.TradeStatus },
+      data: { ...serializeOrder(order), items, ecpay_trade_status: tradeInfo.TradeStatus },
       error: null,
       message: '尚未完成付款，請稍後再查詢'
     });
   } catch (err) {
-    console.error('[ECPay] QueryTradeInfo error:', err.message);
-    return res.status(500).json({
-      data: null,
-      error: 'ECPAY_QUERY_ERROR',
-      message: '查詢綠界付款狀態失敗，請稍後再試'
-    });
+    return next(err);
   }
 });
 

@@ -1,4 +1,4 @@
-const { createApp, ref, onMounted } = Vue;
+const { createApp, ref, computed, onMounted } = Vue;
 
 createApp({
   setup() {
@@ -24,6 +24,17 @@ createApp({
       cancel: { text: '付款已取消。', cls: 'bg-apricot/10 text-apricot border border-apricot/20' },
       pending: { text: '付款處理中，請點擊「查詢付款狀態」確認結果。', cls: 'bg-apricot/10 text-apricot border border-apricot/20' },
     };
+
+    // The URL only says what the visitor was told. A banner that claims a payment outcome
+    // must agree with the real order status, otherwise ?payment=success on any order would
+    // show "付款成功".
+    const requiredStatus = { success: 'paid', failed: 'failed', pending: 'pending' };
+    const visiblePaymentResult = computed(() => {
+      const result = paymentResult.value;
+      if (!result || !paymentMessages[result] || !order.value) return null;
+      if (requiredStatus[result] && order.value.status !== requiredStatus[result]) return null;
+      return result;
+    });
 
     async function checkPayment() {
       if (!order.value || paying.value) return;
@@ -60,6 +71,9 @@ createApp({
       }
     });
 
-    return { order, loading, paying, paymentResult, statusMap, paymentMessages, checkPayment, formatDate };
+    return {
+      order, loading, paying, paymentResult, visiblePaymentResult,
+      statusMap, paymentMessages, checkPayment, formatDate
+    };
   }
 }).mount('#app');

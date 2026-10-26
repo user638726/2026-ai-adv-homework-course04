@@ -14,7 +14,7 @@
 | 後台訂單管理 | ✅ 完成 | 訂單查詢與狀態篩選 |
 | 前台頁面 | ✅ 完成 | EJS + Tailwind CSS |
 | 後台頁面 | ✅ 完成 | EJS + Tailwind CSS |
-| 測試 | ✅ 完成 | 55 項 Unit/API + 10 項 Integration + 1 項綠界真實付款 E2E |
+| 測試 | ✅ 完成 | 242 項 Unit/API + 16 項 Integration + 1 項綠界真實付款 E2E |
 | API 文件 | ✅ 完成 | Swagger/OpenAPI 生成與 Postman Collection 自動轉換 |
 
 ---
@@ -29,7 +29,7 @@
 
 | 欄位 | 型別 | 必填 | 驗證規則 |
 |------|------|------|----------|
-| email | string | 是 | 符合 `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`，全域唯一 |
+| email | string | 是 | `帳號@網域` 格式：網域至少兩段、以點分隔且各段不可為空，不可含空白或第二個 `@`；總長度 ≤ 254；全域唯一 |
 | password | string | 是 | 最少 6 字元 |
 | name | string | 是 | 非空（不可全為空白） |
 
@@ -44,7 +44,7 @@
 | 狀態碼 | 錯誤碼 | 情境 |
 |--------|--------|------|
 | 400 | VALIDATION_ERROR | 缺少 email / password / name，或欄位不是字串 |
-| 400 | VALIDATION_ERROR | Email 格式不正確 |
+| 400 | VALIDATION_ERROR | Email 格式不正確，或超過 254 字元 |
 | 400 | VALIDATION_ERROR | 密碼少於 6 字元 |
 | 409 | CONFLICT | Email 已被註冊 |
 
@@ -62,7 +62,7 @@
 **業務邏輯**：
 - 使用 `bcrypt.compareSync()` 比對密碼
 - 無論是 email 不存在或密碼錯誤，一律回 401 + 相同訊息
-- Token 有效期 7 天，payload 包含 `{ userId, email, role }`
+- Token 有效期 7 天，payload 包含 `{ userId, email, role }`；驗證 token 時，`email` 與 `role` 以資料庫中的使用者為準，不採信 token 內的 claim（角色異動後，舊 token 不會保留原權限）
 - 若請求帶 `X-Session-Id`，登入成功後將訪客購物車併入會員購物車：同商品數量相加、以目前庫存為上限，庫存為 0 的品項捨棄；合併後清空該訪客購物車
 
 **錯誤情境**：
@@ -103,7 +103,7 @@
 
 **業務邏輯**：
 - 分頁計算：`offset = (page - 1) * limit`
-- 無效 page/limit 值自動修正（`parseInt` 失敗則取預設值，再以 `Math.max`/`Math.min` 限制範圍）
+- `page`、`limit` 只接受純數字字串。`0`、負數、小數、夾雜文字（如 `2abc`）、陣列或物件（如 `page[x]=1`）都使用預設值（page 1、limit 10）；`limit` 超過 100 以 100 計，`page` 超過 1,000,000 以 1,000,000 計（回傳空列表）。無效參數不會造成 500
 - 回傳 pagination 物件：`{ total, page, limit, totalPages }`
 
 ### GET /api/products/:id — 商品詳情
@@ -233,7 +233,7 @@
 | 偏遠地區 | 加收 200 元 |
 | 當日急件 | 加收 250 元 |
 
-`calculateShipping({ subtotal, method, isRemoteArea, isExpress })` 回傳 `baseFee`、`remoteAreaSurcharge`、`expressSurcharge`、`shippingFee` 及 `totalAmount` 等明細。滿額優惠僅將 `baseFee` 歸零，不影響附加費。
+`calculateShipping({ subtotal, method, isRemoteArea, isExpress })` 回傳 `baseFee`、`remoteAreaSurcharge`、`expressSurcharge`、`shippingFee` 及 `totalAmount` 等明細。滿額優惠僅將 `baseFee` 歸零，不影響附加費。「滿 1,500 元」包含剛好 1,500 元（`subtotal >= 1500`）；`subtotal` 必須是非負整數，否則丟出 `TypeError`。
 
 ---
 
@@ -250,7 +250,7 @@
 | 欄位 | 型別 | 必填 | 驗證規則 |
 |------|------|------|----------|
 | recipientName | string | 是 | 非空字串 |
-| recipientEmail | string | 是 | 符合 email 正則 |
+| recipientEmail | string | 是 | 格式同註冊的 Email（≤ 254 字元） |
 | recipientAddress | string | 是 | 非空字串 |
 | shippingMethod | string | 是 | `home_delivery` 或 `convenience_store` |
 | isRemoteArea | boolean | 是 | 是否為偏遠地區 |
@@ -260,11 +260,15 @@
 1. 驗證收件人欄位、Email 格式及配送條件
 2. 從 `cart_items JOIN products` 取得購物車品項（僅查 `user_id`，不含 session）
 3. 購物車為空 → 400 CART_EMPTY
-4. 逐品項檢查庫存，不足者收集名稱 → 400「以下商品庫存不足：名稱1, 名稱2」
-5. 依資料庫價格計算 `subtotal = Σ(price × quantity)`
-6. 調用 Shipping 模組計算 `shippingFee`，並得 `totalAmount = subtotal + shippingFee`
-7. 生成 `orderNo = ORD-YYYYMMDD-{5碼UUID大寫}`（日期採台北時間）
-8. **Transaction**：INSERT order（含配送快照） → INSERT order_items（快照名稱+價格） → UPDATE stock → DELETE cart_items
+4. 任何品項數量不是正整數（舊版本可能留下小數數量的資料）→ 400 VALIDATION_ERROR
+5. 逐品項檢查庫存，不足者收集名稱 → 400「以下商品庫存不足：名稱1, 名稱2」
+6. 依資料庫價格計算 `subtotal = Σ(price × quantity)`
+7. 調用 Shipping 模組計算 `shippingFee`，並得 `totalAmount = subtotal + shippingFee`
+8. **Transaction**（`BEGIN IMMEDIATE`，先取得寫入鎖）：
+   1. 生成 `orderNo = ORD-YYYYMMDD-{5碼UUID大寫}`（日期採台北時間；與既有訂單編號重複時重新產生，最多 10 次）
+   2. INSERT order（含配送快照）
+   3. 對每個品項 INSERT order_items（快照名稱+價格），並以 `UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?` 扣庫存；影響列數為 0 代表庫存已被他人買走（或購物車內同商品有多列、合計超量），整筆回滾並回 400 STOCK_INSUFFICIENT
+   4. DELETE cart_items
 9. 回傳 201 + 訂單詳情（含 `subtotal`、`shipping_fee`、`total_amount`）
 
 **錯誤情境**：
@@ -272,10 +276,11 @@
 | 狀態碼 | 錯誤碼 | 情境 |
 |--------|--------|------|
 | 400 | VALIDATION_ERROR | 缺少收件人欄位，或欄位不是字串 |
-| 400 | VALIDATION_ERROR | Email 格式不正確 |
+| 400 | VALIDATION_ERROR | Email 格式不正確，或超過 254 字元 |
 | 400 | VALIDATION_ERROR | 配送方式不支援，或偏遠/急件旗標非 boolean |
+| 400 | VALIDATION_ERROR | 購物車內有無效的商品數量（非正整數） |
 | 400 | CART_EMPTY | 購物車為空 |
-| 400 | STOCK_INSUFFICIENT | 庫存不足（訊息中列出所有不足商品名稱） |
+| 400 | STOCK_INSUFFICIENT | 庫存不足（訊息中列出所有不足商品名稱）；或下單當下庫存已被他人買走（整筆回滾） |
 
 ### GET /api/orders — 訂單列表
 
@@ -325,7 +330,7 @@
 
 ## 綠界金流串接（ECPay AIO）
 
-> **認證模式**：付款查詢需 JWT（authMiddleware）；付款頁面路由為公開（orderId 為 UUID 不可猜測）。
+> **認證模式**：付款查詢需 JWT（authMiddleware）；付款頁面路由目前為公開，以訂單 UUID 存取、尚未檢查擁有者。UUID 會出現在網址中，不應視為機密，後續需改為需登入（見 `docs/ai-review.md` F-15）。
 
 ### 整體付款流程
 
@@ -348,6 +353,7 @@
 - 從 DB 讀取訂單與品項資訊
 - 訂單不存在 → 404
 - 訂單狀態非 pending → 302 重導至訂單詳情頁
+- 訂單沒有 `merchant_trade_no` → 400
 - 產生 ECPay 所需參數：MerchantID、MerchantTradeNo、MerchantTradeDate（台灣時區）、TotalAmount、ItemName（商品名稱以 `#` 連接，上限 400 bytes）等
 - 計算 CheckMacValue（SHA256，ECPay 專用 URL 編碼）
 - 設定 ClientBackURL 為 `/orders/:orderId?payment=pending`（付款後瀏覽器導回）
@@ -376,8 +382,8 @@
 1. 查詢訂單（驗證 user_id 與訂單存在）
 2. 訂單已非 pending → 直接回傳現有狀態
 3. 訂單無 `merchant_trade_no` → 400
-4. 呼叫綠界 `POST /Cashier/QueryTradeInfo/V5`（TimeStamp 每次重新產生，有效期 3 分鐘）
-5. `TradeStatus === '1'` 時，先驗證回應的 CheckMacValue，並核對 `MerchantTradeNo`、`TradeAmt` 與訂單一致；任一不符 → 500 `ECPAY_QUERY_ERROR`，訂單維持 pending
+4. 呼叫綠界 `POST /Cashier/QueryTradeInfo/V5`（TimeStamp 每次重新產生，有效期 3 分鐘；請求逾時 10 秒，逾時視為查詢失敗）
+5. `TradeStatus === '1'` 時，回應必須帶有效的 CheckMacValue（缺少或不符都視為驗證失敗），並核對 `MerchantTradeNo`、`TradeAmt` 與訂單一致；任一不符 → 500 `ECPAY_QUERY_ERROR`，訂單維持 pending。只有綠界查詢與其回應驗證的錯誤會回 `ECPAY_QUERY_ERROR`，之後的資料庫錯誤回 500 `INTERNAL_ERROR`
 6. 驗證通過 → 以 `WHERE status = 'pending'` 條件更新為 `paid`（狀態不可逆），回傳成功
 7. 其他 TradeStatus → 回傳「尚未完成付款」，不改變訂單狀態
 
@@ -494,6 +500,7 @@
 
 **業務邏輯**：
 - status 參數使用白名單驗證：只接受 `['pending', 'paid', 'failed']`，其他值視為未提供
+- `page`、`limit` 的處理規則同商品列表；排序為 `created_at` 降序，同一秒建立的訂單再依寫入先後（`rowid`）降序，分頁順序因此穩定
 - 回傳所有訂單欄位（含 user_id, recipient_name, recipient_email）
 
 ### GET /api/admin/orders/:id — 訂單詳情

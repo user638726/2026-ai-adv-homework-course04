@@ -144,6 +144,9 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;');
 }
 
+// Without a limit a slow ECPay answer would keep the request (and the member's page) waiting
+const QUERY_TIMEOUT_MS = 10000;
+
 async function queryTradeInfo(merchantTradeNo, config) {
   const cfg = config || ECPAY_CONFIG;
 
@@ -161,6 +164,7 @@ async function queryTradeInfo(merchantTradeNo, config) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
   });
 
   if (!response.ok) {
