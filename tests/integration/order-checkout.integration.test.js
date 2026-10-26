@@ -595,6 +595,73 @@ describe('Order checkout integration flow', () => {
     ).get(member.user.id).count).toBe(1);
   });
 
+  it('charges ECPay the discounted total and only accepts a payment of that amount', async () => {
+    const product = createProduct({ name: '優惠碼整合測試花束', price: 1000, stock: 10 });
+    const member = await registerMember('coupon-flow@example.com');
+    await addProductToCart(member.token, product.id, 2);
+
+    const orderResponse = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${member.token}`)
+      .send({ ...ORDER_PAYLOAD, couponCode: 'spring10' });
+
+    // 2,000 - 200 = 1,800 keeps the base shipping free; remote area 200 + express 250 still apply
+    expectEnvelope(orderResponse, 201);
+    expect(orderResponse.body.data).toMatchObject({
+      subtotal: 2000,
+      discount: 200,
+      shipping_fee: 450,
+      total_amount: 2250,
+      coupon_code: 'SPRING10'
+    });
+    const order = orderResponse.body.data;
+
+    expect(db.prepare(
+      'SELECT subtotal, discount, coupon_code, shipping_fee, total_amount FROM orders WHERE id = ?'
+    ).get(order.id)).toEqual({
+      subtotal: 2000,
+      discount: 200,
+      coupon_code: 'SPRING10',
+      shipping_fee: 450,
+      total_amount: 2250
+    });
+    expect(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.id).stock).toBe(8);
+
+    // The ECPay form asks for the discounted total
+    const form = await request(app).get(`/ecpay/payment/${order.id}`);
+    expect(parseHiddenInputs(form.text).TotalAmount).toBe('2250');
+
+    const merchantTradeNo = order.order_no.replace(/-/g, '');
+    const paidAnswer = (tradeAmount) => vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => signedTradeInfo({
+        MerchantID: ECPAY_CONFIG.merchantId,
+        MerchantTradeNo: merchantTradeNo,
+        TradeAmt: String(tradeAmount),
+        TradeStatus: '1'
+      })
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // A payment of the amount without the discount does not belong to this order
+    vi.stubGlobal('fetch', paidAnswer(2450));
+    const wrongAmount = await request(app)
+      .post(`/api/orders/${order.id}/check-payment`)
+      .set('Authorization', `Bearer ${member.token}`);
+    expectEnvelope(wrongAmount, 500);
+    expect(wrongAmount.body.error).toBe('ECPAY_QUERY_ERROR');
+    expect(db.prepare('SELECT status FROM orders WHERE id = ?').get(order.id).status).toBe('pending');
+
+    vi.stubGlobal('fetch', paidAnswer(2250));
+    const paid = await request(app)
+      .post(`/api/orders/${order.id}/check-payment`)
+      .set('Authorization', `Bearer ${member.token}`);
+    expectEnvelope(paid, 200);
+    expect(paid.body.data).toMatchObject({ status: 'paid', discount: 200, coupon_code: 'SPRING10' });
+    expect(db.prepare('SELECT status FROM orders WHERE id = ?').get(order.id).status).toBe('paid');
+  });
+
   it('rejects non-integer quantities at the service layer', async () => {
     const member = await registerMember('service-fraction@example.com');
     const subtotal = 1050;

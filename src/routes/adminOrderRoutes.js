@@ -162,6 +162,11 @@ router.get('/', (req, res) => {
  *                       type: string
  *                     subtotal:
  *                       type: integer
+ *                     discount:
+ *                       type: integer
+ *                     coupon_code:
+ *                       type: string
+ *                       nullable: true
  *                     shipping_fee:
  *                       type: integer
  *                     shipping_method:

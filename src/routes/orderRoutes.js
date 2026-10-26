@@ -3,6 +3,7 @@ const db = require('../database');
 const authMiddleware = require('../middleware/authMiddleware');
 const { queryTradeInfo } = require('../utils/ecpay');
 const { SHIPPING_METHODS, calculateShipping } = require('../utils/shipping');
+const { applyCoupon, CouponError } = require('../utils/coupon');
 const {
   serializeOrder,
   findOrderById,
@@ -60,6 +61,10 @@ function testEnvOnly(req, res, next) {
  *                 type: boolean
  *               isExpress:
  *                 type: boolean
+ *               couponCode:
+ *                 type: string
+ *                 nullable: true
+ *                 description: 選填的優惠碼（FLOWER100、SPRING10），不分大小寫，每張訂單最多一組；不帶、null 或空白視為未使用
  *     responses:
  *       201:
  *         description: 訂單建立成功
@@ -77,6 +82,14 @@ function testEnvOnly(req, res, next) {
  *                       type: string
  *                     subtotal:
  *                       type: integer
+ *                       description: 折扣前的商品小計
+ *                     discount:
+ *                       type: integer
+ *                       description: 優惠碼折抵金額，未使用為 0
+ *                     coupon_code:
+ *                       type: string
+ *                       nullable: true
+ *                       description: 使用的優惠碼（大寫），未使用為 null
  *                     shipping_fee:
  *                       type: integer
  *                     shipping_method:
@@ -88,6 +101,7 @@ function testEnvOnly(req, res, next) {
  *                       type: boolean
  *                     total_amount:
  *                       type: integer
+ *                       description: 商品小計 - 折扣 + 運費
  *                     status:
  *                       type: string
  *                     items:
@@ -109,7 +123,10 @@ function testEnvOnly(req, res, next) {
  *                 message:
  *                   type: string
  *       400:
- *         description: 購物車為空或庫存不足或收件資訊缺失
+ *         description: >-
+ *           購物車為空（CART_EMPTY）、庫存不足（STOCK_INSUFFICIENT）、收件資訊或 couponCode 格式錯誤（VALIDATION_ERROR），
+ *           或優惠碼不可用：COUPON_INVALID（不存在）、COUPON_EXPIRED（已失效）、COUPON_MIN_SUBTOTAL（未達使用門檻）。
+ *           任何一種都不會建立訂單、扣庫存或清空購物車
  */
 router.post('/', (req, res) => {
   const {
@@ -118,7 +135,8 @@ router.post('/', (req, res) => {
     recipientAddress,
     shippingMethod,
     isRemoteArea,
-    isExpress
+    isExpress,
+    couponCode
   } = req.body;
   const userId = req.user.userId;
 
@@ -154,6 +172,15 @@ router.post('/', (req, res) => {
     });
   }
 
+  // Optional; an array would mean several coupons, and an order takes at most one
+  if (couponCode !== undefined && couponCode !== null && typeof couponCode !== 'string') {
+    return res.status(400).json({
+      data: null,
+      error: 'VALIDATION_ERROR',
+      message: 'couponCode 必須為字串（每張訂單最多使用一組優惠碼）'
+    });
+  }
+
   const cartItems = getCheckoutItems(userId);
 
   if (cartItems.length === 0) {
@@ -183,12 +210,26 @@ router.post('/', (req, res) => {
     });
   }
 
-  // Calculate the subtotal and server-authoritative shipping fee.
+  // Calculate the subtotal, the coupon discount and the server-authoritative shipping fee.
   const subtotal = cartItems.reduce(
     (sum, item) => sum + item.product_price * item.quantity, 0
   );
+
+  let coupon;
+  try {
+    coupon = applyCoupon({ subtotal, couponCode });
+  } catch (err) {
+    // Nothing has been written yet: no order, no stock deduction, the cart stays as it is
+    if (err instanceof CouponError) {
+      return res.status(400).json({ data: null, error: err.code, message: err.message });
+    }
+    throw err;
+  }
+
+  // The discount applies to the goods only; shipping, including the free-shipping threshold,
+  // is based on what is left after it.
   const shipping = calculateShipping({
-    subtotal,
+    subtotal: coupon.discountedSubtotal,
     method: shippingMethod,
     isRemoteArea,
     isExpress
@@ -202,6 +243,8 @@ router.post('/', (req, res) => {
       delivery: { method: shippingMethod, isRemoteArea, isExpress },
       cartItems,
       subtotal,
+      discount: coupon.discount,
+      couponCode: coupon.couponCode,
       shipping
     });
   } catch (err) {
@@ -224,6 +267,8 @@ router.post('/', (req, res) => {
       id: order.id,
       order_no: order.order_no,
       subtotal: order.subtotal,
+      discount: order.discount,
+      coupon_code: order.coupon_code,
       shipping_fee: order.shipping_fee,
       shipping_method: order.shipping_method,
       is_remote_area: Boolean(order.is_remote_area),
@@ -268,6 +313,11 @@ router.post('/', (req, res) => {
  *                             type: string
  *                           subtotal:
  *                             type: integer
+ *                           discount:
+ *                             type: integer
+ *                           coupon_code:
+ *                             type: string
+ *                             nullable: true
  *                           shipping_fee:
  *                             type: integer
  *                           shipping_method:
@@ -331,6 +381,11 @@ router.get('/', (req, res) => {
  *                       type: string
  *                     subtotal:
  *                       type: integer
+ *                     discount:
+ *                       type: integer
+ *                     coupon_code:
+ *                       type: string
+ *                       nullable: true
  *                     shipping_fee:
  *                       type: integer
  *                     shipping_method:
