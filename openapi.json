@@ -349,7 +349,8 @@
         }
       },
       "get": {
-        "summary": "自己的訂單列表",
+        "summary": "自己的訂單列表（可依狀態篩選並分頁）",
+        "description": "只回傳自己的訂單，依建立時間由新到舊。與後台列表不同，status、page、limit 不合法時回 400，不會退回預設值。",
         "tags": [
           "Orders"
         ],
@@ -358,9 +359,45 @@
             "bearerAuth": []
           }
         ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "description": "只回傳該狀態的訂單；不帶表示不篩選",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "paid",
+                "failed"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "description": "頁碼，正整數",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "description": "每頁筆數，正整數；超過 50 以 50 計",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "成功",
+            "description": "成功（page 超過最後一頁時 orders 為空陣列）",
             "content": {
               "application/json": {
                 "schema": {
@@ -407,6 +444,23 @@
                               }
                             }
                           }
+                        },
+                        "pagination": {
+                          "type": "object",
+                          "properties": {
+                            "page": {
+                              "type": "integer"
+                            },
+                            "limit": {
+                              "type": "integer"
+                            },
+                            "total": {
+                              "type": "integer"
+                            },
+                            "totalPages": {
+                              "type": "integer"
+                            }
+                          }
                         }
                       }
                     },
@@ -421,6 +475,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "status 不在 pending、paid、failed 之內，或 page、limit 不是正整數（VALIDATION_ERROR）"
           }
         }
       }

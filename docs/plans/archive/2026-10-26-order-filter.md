@@ -60,11 +60,11 @@
 
 ## Tasks
 
-- [ ] `parseStrictPagination` 與單元測試
-- [ ] `listOrdersForUser` 支援狀態篩選與分頁
-- [ ] `GET /api/orders` 驗證、查詢、回應格式
-- [ ] API 測試（篩選、分頁、預設值、上限、400、隔離、排序穩定性）
-- [ ] 前端訂單頁頁碼按鈕
-- [ ] 執行 `test:unit`、`test:integration`、`test:acceptance -- order-filter`
-- [ ] 更新 `docs/FEATURES.md`、`ARCHITECTURE.md`、`TESTING.md`、`CHANGELOG.md` 與 `openapi.json`
-- [ ] 計畫移至 `docs/plans/archive/`
+- [x] `parseStrictPagination` 與單元測試
+- [x] `listOrdersForUser` 支援狀態篩選與分頁
+- [x] `GET /api/orders` 驗證、查詢、回應格式
+- [x] API 測試（篩選、分頁、預設值、上限、400、隔離、排序穩定性）
+- [x] 前端訂單頁頁碼按鈕
+- [x] 執行 `test:unit`、`test:integration`、`test:acceptance -- order-filter`
+- [x] 更新 `docs/FEATURES.md`、`ARCHITECTURE.md`、`TESTING.md`、`CHANGELOG.md` 與 `openapi.json`
+- [x] 計畫移至 `docs/plans/archive/`

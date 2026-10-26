@@ -9,13 +9,13 @@
 | 購物車管理 | ✅ 完成 | 雙模式認證（JWT / Session ID），登入時合併訪客購物車 |
 | 配送費用 | ✅ 完成 | 宅配/超商、滿額免基本運費、偏遠/急件附加費 |
 | 結帳優惠碼 | ✅ 完成（API） | FLOWER100、SPRING10（SUMMER50 已失效）；訂單記錄優惠碼與折扣。前端結帳頁尚未提供輸入欄位 |
-| 訂單管理 | ✅ 完成 | 建立、查詢、模擬付款（僅測試環境） |
+| 訂單管理 | ✅ 完成 | 建立、查詢（可依狀態篩選並分頁）、模擬付款（僅測試環境） |
 | 綠界金流串接 | ✅ 完成 | ECPay AIO 付款、QueryTradeInfo 查詢驗證 |
 | 後台商品管理 | ✅ 完成 | 商品 CRUD |
 | 後台訂單管理 | ✅ 完成 | 訂單查詢與狀態篩選 |
 | 前台頁面 | ✅ 完成 | EJS + Tailwind CSS |
 | 後台頁面 | ✅ 完成 | EJS + Tailwind CSS |
-| 測試 | ✅ 完成 | 343 項 Unit/API + 17 項 Integration + 1 項綠界真實付款 E2E |
+| 測試 | ✅ 完成 | 414 項 Unit/API + 17 項 Integration + 1 項綠界真實付款 E2E |
 | API 文件 | ✅ 完成 | Swagger/OpenAPI 生成與 Postman Collection 自動轉換 |
 
 ---
@@ -321,9 +321,33 @@
 
 ### GET /api/orders — 訂單列表
 
-**行為描述**：回傳當前使用者的所有訂單，依建立時間降序排列。無分頁。
+**行為描述**：回傳當前使用者自己的訂單，可依付款狀態篩選並分頁，依建立時間由新到舊排列。
 
-**回應欄位**：id, order_no, subtotal, discount, coupon_code, shipping_fee, shipping_method, is_remote_area, is_express, total_amount, status, created_at
+**Query 參數**（皆選填）：
+
+| 參數 | 型別 | 預設值 | 說明 |
+|------|------|--------|------|
+| status | string | 無（不篩選） | `pending` / `paid` / `failed`，其他值回 400 |
+| page | integer | 1 | 頁碼，正整數，否則回 400 |
+| limit | integer | 10 | 每頁筆數，正整數，否則回 400；超過 50 以 50 計 |
+
+**回應**：`data.orders`（陣列）與 `data.pagination`（`page`、`limit`、`total`、`totalPages`），格式與 `GET /api/admin/orders` 相同。
+
+**orders 內的欄位**：id, order_no, subtotal, discount, coupon_code, shipping_fee, shipping_method, is_remote_area, is_express, total_amount, status, created_at
+
+**業務邏輯**：
+- 只查詢目前會員的訂單；`total` 是符合條件的全部筆數（含篩選），不只是這一頁
+- 排序為 `created_at` 降序，同一秒建立的訂單再依寫入先後（`rowid`）降序，分頁順序因此穩定
+- 與後台列表不同，這裡不合法的參數不會退回預設值：`status` 不是三個允許值之一（含空字串、大小寫不同、重複的參數）、`page` 或 `limit` 不是正整數（`0`、負數、小數、`abc`、空字串、`1e3`、重複或巢狀參數）都回 400 `VALIDATION_ERROR`；錯誤訊息不回顯使用者輸入
+- `page` 超過最後一頁時回 200，`orders` 為空陣列，`pagination` 照實回報
+- 前端訂單頁（`/orders`）每頁顯示 10 筆，總頁數超過 1 時顯示頁碼按鈕；尚未提供狀態篩選的介面
+
+**錯誤情境**：
+
+| HTTP | error | 說明 |
+|------|-------|------|
+| 400 | VALIDATION_ERROR | `status` 不在允許值內，或 `page`、`limit` 不是正整數 |
+| 401 | UNAUTHORIZED | 未帶有效的 JWT |
 
 ### GET /api/orders/:id — 訂單詳情
 

@@ -52,7 +52,7 @@ module.exports = db;
 - 後端必須根據受信任資料重算費用，不接受前端自行傳入的總額。
 - 邊界門檻與可累加條件應各有單元測試（例如免運門檻要測 1,499 / 1,500 / 1,501）。
 - 測試不得被停用：`tests/` 內不可出現 skip、only、todo 的測試（`tests/noDisabledTests.test.js` 會檢查，失敗訊息會列出檔案與行號）。需要暫時排除時，應刪除或修正測試並在 PR 說明，不要留一個永遠被略過的案例。
-- 路由讀取列表參數一律使用 `parsePagination()`，不要直接 `parseInt(req.query.x)`：query 值可能是陣列或物件。
+- 路由讀取列表參數一律使用 `parsePagination()`，不要直接 `parseInt(req.query.x)`：query 值可能是陣列或物件。`parsePagination()` 遇到不合法的值會退回預設值；規格要求回 400 的列表（例如 `GET /api/orders`）改用 `parseStrictPagination()`，它在 `page`、`limit` 不合法時回傳 `null`，由路由回 400。
 
 ## 新增 API 端點步驟
 
