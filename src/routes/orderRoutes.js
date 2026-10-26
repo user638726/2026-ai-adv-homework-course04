@@ -17,7 +17,10 @@ const {
   InsufficientStockError
 } = require('../services/orderService');
 const { isTradePaid, markOrderPaid } = require('../services/paymentService');
-const { isNonEmptyString, isValidEmail } = require('../utils/validators');
+const { isNonEmptyString, isValidEmail, parseStrictPagination } = require('../utils/validators');
+
+const ORDER_STATUSES = ['pending', 'paid', 'failed'];
+const MAX_ORDER_LIST_LIMIT = 50;
 
 const router = express.Router();
 
@@ -284,13 +287,36 @@ router.post('/', (req, res) => {
  * @openapi
  * /api/orders:
  *   get:
- *     summary: 自己的訂單列表
+ *     summary: 自己的訂單列表（可依狀態篩選並分頁）
+ *     description: 只回傳自己的訂單，依建立時間由新到舊。與後台列表不同，status、page、limit 不合法時回 400，不會退回預設值。
  *     tags: [Orders]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         description: 只回傳該狀態的訂單；不帶表示不篩選
+ *         schema:
+ *           type: string
+ *           enum: [pending, paid, failed]
+ *       - in: query
+ *         name: page
+ *         description: 頁碼，正整數
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         description: 每頁筆數，正整數；超過 50 以 50 計
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 50
+ *           default: 10
  *     responses:
  *       200:
- *         description: 成功
+ *         description: 成功（page 超過最後一頁時 orders 為空陣列）
  *         content:
  *           application/json:
  *             schema:
@@ -325,17 +351,57 @@ router.post('/', (req, res) => {
  *                             type: string
  *                           created_at:
  *                             type: string
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         page:
+ *                           type: integer
+ *                         limit:
+ *                           type: integer
+ *                         total:
+ *                           type: integer
+ *                         totalPages:
+ *                           type: integer
  *                 error:
  *                   type: string
  *                   nullable: true
  *                 message:
  *                   type: string
+ *       400:
+ *         description: status 不在 pending、paid、failed 之內，或 page、limit 不是正整數（VALIDATION_ERROR）
  */
 router.get('/', (req, res) => {
-  const orders = listOrdersForUser(req.user.userId);
+  const { status } = req.query;
+  if (status !== undefined && !ORDER_STATUSES.includes(status)) {
+    return res.status(400).json({
+      data: null,
+      error: 'VALIDATION_ERROR',
+      message: 'status 必須是 pending、paid 或 failed'
+    });
+  }
+
+  const pagination = parseStrictPagination(req.query, { defaultLimit: 10, maxLimit: MAX_ORDER_LIST_LIMIT });
+  if (!pagination) {
+    return res.status(400).json({
+      data: null,
+      error: 'VALIDATION_ERROR',
+      message: 'page 與 limit 必須是正整數'
+    });
+  }
+
+  const { page, limit, offset } = pagination;
+  const { orders, total } = listOrdersForUser(req.user.userId, { status, limit, offset });
 
   res.json({
-    data: { orders: orders.map(serializeOrder) },
+    data: {
+      orders: orders.map(serializeOrder),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    },
     error: null,
     message: '成功'
   });

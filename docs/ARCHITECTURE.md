@@ -37,7 +37,7 @@
 │   │   ├── ecpay.js                # 綠界 ECPay 工具：CheckMacValue 簽章、URL 編碼、AIO 表單產生、QueryTradeInfo 查詢（10 秒逾時）
 │   │   ├── shipping.js             # 配送費用純邏輯：基本運費、免運門檻（含 1,500 元）、偏遠/急件附加費
 │   │   ├── coupon.js               # 優惠碼純邏輯：規則表、折扣計算（四捨五入、上限、使用門檻）、CouponError
-│   │   ├── validators.js           # 共用輸入驗證：非空字串、選填字串、Email、正整數、分頁參數
+│   │   ├── validators.js           # 共用輸入驗證：非空字串、選填字串、Email、正整數、分頁參數（寬鬆與嚴格兩種）
 │   │   └── envValidation.js        # 啟動前環境變數檢查（production 的 JWT_SECRET、管理員帳密、ECPay 設定）
 │   ├── services/
 │   │   ├── orderService.js         # 訂單查詢、序列化、唯一訂單編號與建單 transaction（含庫存扣除守衛，依賴資料庫）
@@ -90,7 +90,7 @@
 │           ├── cart.js             # 購物車頁腳本
 │           ├── checkout.js         # 結帳頁腳本
 │           ├── login.js            # 登入頁腳本
-│           ├── orders.js           # 訂單列表頁腳本
+│           ├── orders.js           # 訂單列表頁腳本（含頁碼）
 │           ├── order-detail.js     # 訂單詳情頁腳本
 │           ├── admin-products.js   # 後台商品管理腳本
 │           └── admin-orders.js     # 後台訂單管理腳本
@@ -113,7 +113,8 @@
     │   ├── cancel-order.test.js     # Issue B：取消未付款訂單並回補庫存
     │   └── order-filter.test.js     # Issue C：我的訂單篩選與分頁
     ├── shipping.test.js            # Shipping 模組單元測試（21 項，含 1,499 / 1,500 / 1,501 邊界）
-    ├── validators.test.js          # Email、正整數、分頁參數驗證（含 ReDoS 輸入）
+    ├── validators.test.js          # Email、正整數、分頁參數驗證（含 ReDoS 輸入、嚴格版分頁）
+    ├── orderList.test.js           # 我的訂單列表 API 測試（狀態篩選、分頁、上限、400、會員隔離、排序穩定）
     ├── coupon.test.js              # Coupon 模組單元測試（規則、邊界、四捨五入、格式與不變量）
     ├── orderCoupon.test.js         # 訂單優惠碼 API 測試（金額、記錄、運費門檻、被拒絕的優惠碼）
     ├── databaseMigration.test.js   # 既有資料庫升級（臨時 SQLite、兩種舊版 schema）
@@ -197,7 +198,7 @@ server.js
 | 方法 | 路徑 | 認證 | 說明 | 檔案 |
 |------|------|------|------|------|
 | POST | `/api/orders` | JWT | 從購物車建立訂單（伺服器重算運費與總額） | orderRoutes.js |
-| GET | `/api/orders` | JWT | 自己的訂單列表 | orderRoutes.js |
+| GET | `/api/orders` | JWT | 自己的訂單列表（`status` 篩選 + `page`／`limit` 分頁，不合法的參數回 400） | orderRoutes.js |
 | GET | `/api/orders/:id` | JWT | 訂單詳情 | orderRoutes.js |
 | PATCH | `/api/orders/:id/pay` | JWT | 模擬付款（僅 `NODE_ENV=test`，其他環境 404） | orderRoutes.js |
 | POST | `/api/orders/:id/check-payment` | JWT | 查詢綠界付款狀態 | orderRoutes.js |

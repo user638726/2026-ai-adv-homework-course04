@@ -36,5 +36,17 @@
         </div>
       </div>
     </a>
+
+    <div v-if="pagination.totalPages > 1" class="flex justify-center gap-2 pt-2">
+      <button
+        v-for="p in pagination.totalPages"
+        :key="p"
+        @click="loadOrders(p)"
+        class="w-10 h-10 rounded-full text-sm transition-colors"
+        :class="p === pagination.page ? 'bg-rose-primary text-white' : 'bg-white text-text-secondary hover:bg-rose-bg'"
+      >
+        {{ p }}
+      </button>
+    </div>
   </div>
 </div>

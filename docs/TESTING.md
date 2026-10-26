@@ -13,7 +13,7 @@
 ## 執行指令
 
 ```bash
-# 單元與 API 測試（17 個檔案、343 項測試）
+# 單元與 API 測試（18 個檔案、414 項測試）
 npm run test:unit
 
 # 結帳、訂單、DB、庫存、回滾與綠界整合測試（17 項測試）
@@ -46,7 +46,7 @@ npm run test:acceptance -- coupon       # 只跑檔名包含 coupon 的測試
 - 設定檔為 `vitest.acceptance.config.js`，同樣使用記憶體 SQLite。
 - 只透過 HTTP API 驗證，不依賴內部函式名稱或資料表結構；每個測試自建會員與指定價格的商品。
 - 在 Issue 完成前預期失敗，因此不包含在 `test:unit`、`test:integration` 與 CI 中。
-- 目前進度：Issue A（優惠碼）已完成，`npm run test:acceptance -- coupon` 的 10 項全數通過；Issue B、C 尚未實作，仍預期失敗。
+- 目前進度：Issue A（優惠碼）已完成，`npm run test:acceptance -- coupon` 的 10 項全數通過；Issue C（我的訂單篩選與分頁）已完成，`npm run test:acceptance -- order-filter` 的 7 項全數通過；Issue B 尚未實作，仍預期失敗。
 
 ## 持續整合（CI）
 
@@ -137,7 +137,7 @@ Integration Test 中有兩層防護：
 | 檔案 | 範圍 |
 |------|------|
 | `tests/shipping.test.js` | Shipping 純函式：基本運費、免運門檻（1,499 / 1,500 / 1,501，宅配與超商）、附加費、非整數／NaN／負數小計 |
-| `tests/validators.test.js` | `isValidEmail`（含 ReDoS 輸入）、`parsePositiveInteger`（安全整數上限）、`parsePagination` |
+| `tests/validators.test.js` | `isValidEmail`（含 ReDoS 輸入）、`parsePositiveInteger`（安全整數上限）、`parsePagination`、`parseStrictPagination`（預設值、上限、各種不合法的 page／limit 回傳 null） |
 | `tests/envValidation.test.js` | 啟動前環境變數檢查：開發環境警告、production 的 JWT_SECRET／管理員帳密／ECPay 設定 |
 | `tests/orderService.test.js` | 訂單編號格式與唯一編號產生（碰撞重試、次數上限） |
 | `tests/coupon.test.js` | Coupon 模組：三組優惠碼的門檻與折扣、SPRING10 的四捨五入進位點與上限、大小寫與空白、不存在／已失效／未達門檻的錯誤碼、原型鏈字串與會被 `toUpperCase()` 折成別的字母的 Unicode 字元、折扣不超過小計的不變量 |
@@ -152,6 +152,7 @@ Integration Test 中有兩層防護：
 | `tests/pages.test.js` | 頁面渲染、付款結果白名單、物件型 query 不造成 500、渲染失敗不洩漏伺服器路徑 |
 | `tests/securityHeaders.test.js` | 基本安全標頭，且不洩露 X-Powered-By |
 | `tests/adminProducts.test.js` | 後台商品 CRUD 與權限、刪除仍在購物車中的商品、名稱驗證、分頁參數容錯 |
+| `tests/orderList.test.js` | 我的訂單列表 API：預設第 1 頁 10 筆與回應格式、同一秒建立的訂單仍由新到舊且跨頁不重複不遺漏、`status` 篩選與篩選後分頁、`limit` 上限 50、超過最後一頁回空陣列、各種不合法的 `status`／`page`／`limit` 回 400、不回顯輸入、不會看到或統計到他人的訂單、需要 JWT |
 | `tests/adminOrders.test.js` | 後台訂單列表、詳情、狀態篩選（pending / paid / failed / 未知值）、新到舊排序與分頁、分頁參數容錯 |
 
 ### 測試不得被停用

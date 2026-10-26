@@ -51,10 +51,29 @@ function parsePagination(query, { defaultLimit = 10, maxLimit = 100 } = {}) {
   return { page, limit, offset: (page - 1) * limit };
 }
 
+/**
+ * Strict variant of parsePagination for endpoints that reject a bad ?page or ?limit.
+ * A missing value uses the default and a limit above the maximum is capped, but anything
+ * that is not a positive integer string (0, -1, 1.5, abc, empty, repeated or nested
+ * parameters) makes the whole query invalid. Returns null in that case.
+ */
+function parseStrictPagination(query, { defaultLimit = 10, maxLimit = 100 } = {}) {
+  const page = query.page === undefined
+    ? 1
+    : parseBoundedInteger(query.page, { max: MAX_PAGE, fallback: null });
+  const limit = query.limit === undefined
+    ? defaultLimit
+    : parseBoundedInteger(query.limit, { max: maxLimit, fallback: null });
+
+  if (page === null || limit === null) return null;
+  return { page, limit, offset: (page - 1) * limit };
+}
+
 module.exports = {
   isNonEmptyString,
   isOptionalString,
   isValidEmail,
   parsePositiveInteger,
-  parsePagination
+  parsePagination,
+  parseStrictPagination
 };
