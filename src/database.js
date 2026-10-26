@@ -62,6 +62,8 @@ function initializeDatabase() {
       shipping_method TEXT NOT NULL DEFAULT 'home_delivery',
       is_remote_area INTEGER NOT NULL DEFAULT 0,
       is_express INTEGER NOT NULL DEFAULT 0,
+      discount INTEGER NOT NULL DEFAULT 0 CHECK(discount >= 0),
+      coupon_code TEXT,
       total_amount INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'paid', 'failed')),
 
@@ -91,16 +93,19 @@ function initializeDatabase() {
     orderColumns.add('merchant_trade_no');
   }
 
-  // Migration: add shipping snapshot columns without changing legacy order totals.
-  const shippingColumns = [
+  // Migration: add the shipping snapshot and coupon columns without changing legacy order totals.
+  // Existing orders get discount 0 and no coupon, which is how they were priced.
+  const snapshotColumns = [
     ['subtotal', 'INTEGER NOT NULL DEFAULT 0'],
     ['shipping_fee', 'INTEGER NOT NULL DEFAULT 0'],
     ['shipping_method', "TEXT NOT NULL DEFAULT 'home_delivery'"],
     ['is_remote_area', 'INTEGER NOT NULL DEFAULT 0'],
-    ['is_express', 'INTEGER NOT NULL DEFAULT 0']
+    ['is_express', 'INTEGER NOT NULL DEFAULT 0'],
+    ['discount', 'INTEGER NOT NULL DEFAULT 0 CHECK(discount >= 0)'],
+    ['coupon_code', 'TEXT']
   ];
 
-  for (const [column, definition] of shippingColumns) {
+  for (const [column, definition] of snapshotColumns) {
     if (!orderColumns.has(column)) {
       db.exec(`ALTER TABLE orders ADD COLUMN ${column} ${definition}`);
     }

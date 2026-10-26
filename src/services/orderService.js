@@ -51,7 +51,7 @@ function findOrderForUser(orderId, userId) {
 
 function listOrdersForUser(userId) {
   return db.prepare(
-    `SELECT id, order_no, subtotal, shipping_fee, shipping_method,
+    `SELECT id, order_no, subtotal, discount, coupon_code, shipping_fee, shipping_method,
             is_remote_area, is_express, total_amount, status, created_at
      FROM orders WHERE user_id = ? ORDER BY created_at DESC, rowid DESC`
   ).all(userId);
@@ -83,25 +83,36 @@ function findInsufficientItems(cartItems) {
 }
 
 // Callers validate user input first; this guards the invariants the amounts rely on
-function assertValidCheckout({ cartItems, subtotal, shipping }) {
+function assertValidCheckout({ cartItems, subtotal, discount, shipping }) {
   for (const item of cartItems) {
     if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0) {
       throw new TypeError(`Invalid cart quantity for product ${item.product_id}: ${item.quantity}`);
     }
   }
-  if (!Number.isSafeInteger(subtotal) || shipping.subtotal !== subtotal) {
-    throw new TypeError('Order subtotal must be an integer that matches the shipping calculation');
+  if (!Number.isSafeInteger(subtotal)) {
+    throw new TypeError('Order subtotal must be an integer');
+  }
+  if (!Number.isSafeInteger(discount) || discount < 0 || discount > subtotal) {
+    throw new TypeError('Order discount must be an integer between 0 and the subtotal');
+  }
+  // Shipping is priced on what the member pays for the goods, i.e. after the discount
+  if (shipping.subtotal !== subtotal - discount) {
+    throw new TypeError('Shipping must be calculated from the subtotal after the discount');
   }
 }
 
 /**
  * Create an order from the member's cart in one transaction:
  * insert order → snapshot items → deduct stock → clear cart.
- * Amounts must already be calculated by the caller.
+ * Amounts must already be calculated by the caller: `subtotal` is the goods total before the
+ * coupon, `shipping` was calculated from `subtotal - discount`, and the order total is
+ * `subtotal - discount + shipping.shippingFee`.
  * Throws InsufficientStockError (and rolls everything back) if any product no longer has enough stock.
  */
-function createOrderFromCart({ userId, recipient, delivery, cartItems, subtotal, shipping }) {
-  assertValidCheckout({ cartItems, subtotal, shipping });
+function createOrderFromCart({
+  userId, recipient, delivery, cartItems, subtotal, discount = 0, couponCode = null, shipping
+}) {
+  assertValidCheckout({ cartItems, subtotal, discount, shipping });
 
   const orderId = uuidv4();
 
@@ -110,8 +121,8 @@ function createOrderFromCart({ userId, recipient, delivery, cartItems, subtotal,
     `INSERT INTO orders (
        id, order_no, user_id, recipient_name, recipient_email, recipient_address,
        subtotal, shipping_fee, shipping_method, is_remote_area, is_express,
-       total_amount, merchant_trade_no
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       discount, coupon_code, total_amount, merchant_trade_no
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertItem = db.prepare(
     `INSERT INTO order_items (id, order_id, product_id, product_name, product_price, quantity)
@@ -140,7 +151,9 @@ function createOrderFromCart({ userId, recipient, delivery, cartItems, subtotal,
       delivery.method,
       delivery.isRemoteArea ? 1 : 0,
       delivery.isExpress ? 1 : 0,
-      shipping.totalAmount,
+      discount,
+      couponCode,
+      subtotal - discount + shipping.shippingFee,
       merchantTradeNo
     );
 

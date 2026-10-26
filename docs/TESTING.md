@@ -13,10 +13,10 @@
 ## 執行指令
 
 ```bash
-# 單元與 API 測試（14 個檔案、242 項測試）
+# 單元與 API 測試（17 個檔案、343 項測試）
 npm run test:unit
 
-# 結帳、訂單、DB、庫存、回滾與綠界整合測試（16 項測試）
+# 結帳、訂單、DB、庫存、回滾與綠界整合測試（17 項測試）
 npm run test:integration
 
 # 已另行啟動 http://localhost:3001 後，執行真實付款 E2E
@@ -46,6 +46,7 @@ npm run test:acceptance -- coupon       # 只跑檔名包含 coupon 的測試
 - 設定檔為 `vitest.acceptance.config.js`，同樣使用記憶體 SQLite。
 - 只透過 HTTP API 驗證，不依賴內部函式名稱或資料表結構；每個測試自建會員與指定價格的商品。
 - 在 Issue 完成前預期失敗，因此不包含在 `test:unit`、`test:integration` 與 CI 中。
+- 目前進度：Issue A（優惠碼）已完成，`npm run test:acceptance -- coupon` 的 10 項全數通過；Issue B、C 尚未實作，仍預期失敗。
 
 ## 持續整合（CI）
 
@@ -139,6 +140,9 @@ Integration Test 中有兩層防護：
 | `tests/validators.test.js` | `isValidEmail`（含 ReDoS 輸入）、`parsePositiveInteger`（安全整數上限）、`parsePagination` |
 | `tests/envValidation.test.js` | 啟動前環境變數檢查：開發環境警告、production 的 JWT_SECRET／管理員帳密／ECPay 設定 |
 | `tests/orderService.test.js` | 訂單編號格式與唯一編號產生（碰撞重試、次數上限） |
+| `tests/coupon.test.js` | Coupon 模組：三組優惠碼的門檻與折扣、SPRING10 的四捨五入進位點與上限、大小寫與空白、不存在／已失效／未達門檻的錯誤碼、原型鏈字串與會被 `toUpperCase()` 折成別的字母的 Unicode 字元、折扣不超過小計的不變量 |
+| `tests/orderCoupon.test.js` | 訂單優惠碼 API：金額與記錄（建單回應、資料庫、訂單詳情、列表、後台詳情）、免運門檻以折扣後小計判斷、附加費不受折扣影響、被拒絕的優惠碼不留任何痕跡、`couponCode` 型別驗證、用戶端傳入的折扣被忽略 |
+| `tests/databaseMigration.test.js` | 既有資料庫升級：以臨時 SQLite 建立兩種舊版 `orders`（出貨欄位與 ECPay 之前、優惠碼之前），確認 migration 補上 `discount`／`coupon_code`、舊訂單回填 0 與 NULL、索引建立、可重複開啟 |
 | `tests/noDisabledTests.test.js` | 守衛：`tests/` 內不得有 skip、only、todo 的測試 |
 | `tests/auth.test.js` | 註冊、登入、重複 Email、個人資料、非字串欄位、JSON 格式錯誤、Email 格式與長度、token 的 role 以資料庫為準 |
 | `tests/products.test.js` | 商品列表、分頁、詳情與 404、無效／超大／物件型分頁參數 |
@@ -177,6 +181,7 @@ Integration Test 中有兩層防護：
 | 付款狀態 | 已付款的訂單不再查詢綠界；沒有交易編號時 check-payment 回 400 `NO_TRADE_NO`、付款頁回 400；標記已付款時的資料庫錯誤回 500 `INTERNAL_ERROR`，不被當成 `ECPAY_QUERY_ERROR` |
 | 庫存守衛 | 購物車同商品多列、合計超過庫存 → 400 `STOCK_INSUFFICIENT` 且整筆回滾；庫存檢查過時（直接呼叫 `createOrderFromCart`）→ `InsufficientStockError`、庫存不會被扣到負數 |
 | 服務層不變量 | `createOrderFromCart` 拒絕非整數數量 |
+| 優惠碼 | 折扣後的總額寫入資料庫、綠界表單的 `TotalAmount` 為折扣後金額；未折扣金額的「已付」回應不被接受，折扣後的金額才標記為 paid |
 
 ### 成功建單資料
 

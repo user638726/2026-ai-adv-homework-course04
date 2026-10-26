@@ -27,9 +27,11 @@
 - 修正 macOS 上 Vitest 測試隨機失敗（401、200 或逾時）：supertest 自開的臨時伺服器綁在 `::`、卻連到 `127.0.0.1`，可能連到同埠的其他程式。新增 `tests/setup/testServer.js` 先在 `127.0.0.1` 開好伺服器，Unit、Integration 與驗收測試皆改用它
 
 ### Added
+- 結帳優惠碼（Issue #1）：`POST /api/orders` 可帶選填的 `couponCode`。規則集中在新的 `src/utils/coupon.js`（`FLOWER100` 折抵 100 元、小計滿 800；`SPRING10` 九折、最多折抵 300 元；`SUMMER50` 已失效）。優惠只折抵商品小計，免運門檻以折扣後的小計判斷，總額 = 小計 − 折扣 + 運費；優惠碼不分大小寫，訂單以大寫記錄。無效、已失效或未達門檻的優惠碼回 400（`COUPON_INVALID`、`COUPON_EXPIRED`、`COUPON_MIN_SUBTOTAL`），不建立訂單、不扣庫存、不清空購物車
+- `orders` 新增 `discount`（預設 0）與 `coupon_code` 欄位，以可重複執行的 migration 補到既有資料庫（舊訂單為 0 與 NULL）；建單、訂單列表、訂單詳情與後台詳情都會回傳這兩個欄位；訂單詳情頁與後台詳情在有折扣時多顯示一列「優惠折扣」。目前只提供 API，前端結帳頁尚未有優惠碼輸入欄位
 - `src/utils/envValidation.js`、`src/middleware/securityHeaders.js`
 - 資料庫索引：`orders(user_id, created_at)`、`orders(status, created_at)`、`cart_items(user_id)`、`cart_items(session_id)`、`order_items(order_id)`、`order_items(product_id)`（`CREATE INDEX IF NOT EXISTS`，舊資料庫啟動時自動補上）
-- 測試：Unit/API 由 55 項增為 242 項（含新檔案 `validators`、`envValidation`、`orderService`、`orderAccess`、`pages`、`securityHeaders`、`noDisabledTests`），Integration 由 10 項增為 16 項。涵蓋跨使用者存取、購物車數量驗證、金額由後端計算、輸入驗證、庫存回滾、簽章驗證等
+- 測試：Unit/API 由 55 項增為 343 項（含新檔案 `validators`、`envValidation`、`orderService`、`orderAccess`、`pages`、`securityHeaders`、`noDisabledTests`、`coupon`、`orderCoupon`、`databaseMigration`），Integration 由 10 項增為 17 項。涵蓋跨使用者存取、購物車數量驗證、金額由後端計算、輸入驗證、庫存回滾、簽章驗證、優惠碼金額與綠界扣款金額、既有資料庫升級等。`npm run test:acceptance -- coupon` 的 10 項驗收測試通過
 - `tests/noDisabledTests.test.js`：`tests/` 內出現 skip、only、todo 的測試時失敗，避免再有測試被默默停用
 - `docs/ai-review.md`：訂單、付款、運費、購物車的 AI 審查報告與各項修正狀態
 
